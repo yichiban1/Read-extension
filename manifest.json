@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "DeepRead — Prototype",
+  "version": "0.0.1",
+  "description": "An early browser-extension prototype for testing an in-page reading guide.",
+  "action": {
+    "default_title": "Open DeepRead",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["activeTab"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["vendor/readability.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

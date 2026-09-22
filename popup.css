@@ -1,0 +1,95 @@
+/* DeepRead popup: deliberately small, simple, and easy to revise. */
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Manrope:wght@500;600;700;800&display=swap");
+
+:root {
+  --ink: #183b56;
+  --paper: #f8f5ef;
+  --line: #d7ded8;
+  --copy: #617075;
+  --accent: #b35f46;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 294px;
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Manrope", system-ui, sans-serif;
+}
+
+.popup {
+  padding: 18px;
+  border-top: 4px solid var(--ink);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.brand-mark {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid #96b1b4;
+  border-radius: 50%;
+  color: #4f7980;
+  font-family: Georgia, serif;
+  font-size: 12px;
+}
+
+.eyebrow {
+  margin: 20px 0 8px;
+  color: #708487;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+h1 {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.description {
+  margin: 12px 0 17px;
+  color: var(--copy);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 11px;
+  border: 0;
+  border-left: 2px solid var(--accent);
+  background: #eee7e2;
+  color: #415d65;
+  font: 700 10px "Manrope", system-ui, sans-serif;
+  cursor: pointer;
+}
+
+button:hover { background: #e5efec; color: var(--ink); }
+button:active { transform: scale(0.98); }
+
+.status {
+  margin: 13px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: #788380;
+  font-size: 9px;
+}
