@@ -24,14 +24,21 @@ function getPageContext() {
   };
 }
 
+function clonePageWithoutDeepRead() {
+  const clone = document.cloneNode(true);
+  clone.querySelector(`#${GUIDE_ID}`)?.remove();
+  return clone;
+}
+
 function extractArticle() {
-  return new Readability(document.cloneNode(true)).parse();
+  return new Readability(clonePageWithoutDeepRead()).parse();
 }
 
 // Fallback for pages Readability does not recognise as an article:
 // strip obvious chrome (nav, scripts, headers…) and take remaining text.
 function extractWholePageText() {
   const clone = document.body.cloneNode(true);
+  clone.querySelector(`#${GUIDE_ID}`)?.remove();
   clone
     .querySelectorAll("script, style, noscript, template, svg, nav, header, footer, aside")
     .forEach((element) => element.remove());
@@ -135,6 +142,12 @@ function buildSummary(text, maxSentences) {
 
 function createGuide() {
   const { title, hostname } = getPageContext();
+  try {
+    globalThis.DeepReadSourceMapping.buildSourceMap();
+  } catch (error) {
+    console.warn("DeepRead source mapping failed.", error);
+  }
+
   const guide = document.createElement("aside");
   guide.id = GUIDE_ID;
   guide.setAttribute("aria-label", "DeepRead Reading Guide");

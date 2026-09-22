@@ -222,3 +222,8 @@
   color: #788481;
   font-size: 9px;
 }
+
+.deepread-source-highlight {
+  outline: 3px solid #b35f46 !important;
+  outline-offset: 4px !important;
+}
