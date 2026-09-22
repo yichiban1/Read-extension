@@ -6,13 +6,20 @@
   const SOURCE_ATTRIBUTE = "data-deepread-source-id";
   const SOURCE_ID_PREFIX = "deepread-source-";
   const GUIDE_ID = "deepread-guide";
-  const SOURCE_SELECTOR = "h1, h2, h3, h4, h5, h6, p, li, blockquote, pre";
+  const SHELL_ID = "deepread-shell";
+  const SELECTION_ACTION_ID = "deepread-selection-action";
+  const SOURCE_SELECTOR =
+    "h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, [role=\"heading\"]";
+  const GENERIC_SELECTOR = "div, span";
   const SEMANTIC_SELECTORS = ["main", "article", '[role="main"]'];
   const FALLBACK_SELECTOR = "section, div";
   const MIN_SUBSTANTIAL_ARTICLE_CHARS = 200;
   const MIN_SUBSTANTIAL_ARTICLE_BLOCKS = 2;
   const MIN_DENSITY_REGION_CHARS = 300;
   const MIN_DENSITY_REGION_BLOCKS = 3;
+  const MIN_GENERIC_TEXT_CHARS = 40;
+  const MIN_GENERIC_DIRECT_TEXT_CHARS = 24;
+  const MAX_LINK_DENSITY = 0.55;
   const HIGHLIGHT_CLASS = "deepread-source-highlight";
   const HIGHLIGHT_DURATION = 1600;
 
@@ -41,7 +48,7 @@
   ]);
 
   const EXCLUDED_NAME_PATTERN =
-    /(?:adsbygoogle|advert|advertisement|sponsor|cookie|consent|gdpr|newsletter|subscribe|popup|modal|utility|toolbar|social[-_ ]?share|share[-_ ]?buttons|comments?|discussion|related[-_ ]?(?:content|articles?)?|recommended|read[-_ ]?next|more[-_ ]?from)/i;
+    /(?:^|[-_\s])ads?(?:[-_\s]|$)|(?:adsbygoogle|advert|advertisement|sponsor|cookie|consent|gdpr|newsletter|subscribe|popup|modal|utility|toolbar|social[-_ ]?share|share[-_ ]?buttons|comments?|discussion|related[-_ ]?(?:content|articles?)?|recommended|read[-_ ]?next|more[-_ ]?from)/i;
 
   let currentMap = null;
   let previousMappedElements = [];
@@ -57,7 +64,7 @@
       typeof element.className === "string"
         ? element.className
         : element.getAttribute("class") || "";
-    return `${element.id || ""} ${className}`.trim();
+    return `${element.id || ""} ${className} ${element.getAttribute("aria-label") || ""}`.trim();
   }
 
   function hasExcludedMarker(element) {
@@ -73,7 +80,10 @@
 
     if (
       element.id === GUIDE_ID ||
-      (element.closest && element.closest(`#${GUIDE_ID}`))
+      element.id === SHELL_ID ||
+      element.id === SELECTION_ACTION_ID ||
+      (element.closest &&
+        element.closest(`#${GUIDE_ID}, #${SHELL_ID}, #${SELECTION_ACTION_ID}`))
     ) {
       return true;
     }
@@ -132,6 +142,46 @@
     return normalizeText(element.textContent);
   }
 
+  function getDirectTextLength(element) {
+    let length = 0;
+    for (const node of element.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        length += normalizeText(node.nodeValue).length;
+      }
+    }
+    return length;
+  }
+
+  function isGenericTextCandidate(element) {
+    const sourceText = getSourceText(element);
+    if (sourceText.length < MIN_GENERIC_TEXT_CHARS) {
+      return false;
+    }
+
+    // A generic wrapper around a known block is not itself a source.
+    if (element.querySelector(SOURCE_SELECTOR)) {
+      return false;
+    }
+
+    // Prefer the smallest meaningful generic text block. This keeps cards,
+    // layout wrappers and nested div/span copies from being mapped twice.
+    const meaningfulGenericDescendant = Array.from(
+      element.querySelectorAll(GENERIC_SELECTOR)
+    ).some(
+      (descendant) =>
+        getSourceText(descendant).length >= MIN_GENERIC_TEXT_CHARS &&
+        getDirectTextLength(descendant) >= MIN_GENERIC_DIRECT_TEXT_CHARS
+    );
+    if (meaningfulGenericDescendant) {
+      return false;
+    }
+
+    return (
+      getDirectTextLength(element) >= MIN_GENERIC_DIRECT_TEXT_CHARS ||
+      element.children.length === 0
+    );
+  }
+
   function isRedundantNestedElement(element, selectedElements) {
     const elementText = normalizeText(element.textContent);
     if (!elementText) {
@@ -141,15 +191,19 @@
     let ancestor = element.parentElement;
     while (ancestor) {
       if (selectedElements.includes(ancestor)) {
-        const ancestorTag = ancestor.tagName.toLowerCase();
         const ancestorText = normalizeText(ancestor.textContent);
-        const nestedParagraph =
-          element.tagName.toLowerCase() === "p" &&
-          ["li", "blockquote", "pre"].includes(ancestorTag);
+        const nestedReadableElement = [
+          "p",
+          "li",
+          "blockquote",
+          "pre",
+          "div",
+          "span"
+        ].includes(element.tagName.toLowerCase());
 
         return (
           elementText === ancestorText ||
-          (nestedParagraph && ancestorText.includes(elementText))
+          (nestedReadableElement && ancestorText.includes(elementText))
         );
       }
       ancestor = ancestor.parentElement;
@@ -158,19 +212,48 @@
     return false;
   }
 
-  function collectReadableElements(root) {
+  function compareDocumentOrder(left, right) {
+    if (left === right) {
+      return 0;
+    }
+    const relation = left.compareDocumentPosition(right);
+    return relation & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+  }
+
+  function collectReadableElements(root, includeGeneric = false) {
+    const selectors = includeGeneric
+      ? `${SOURCE_SELECTOR}, ${GENERIC_SELECTOR}`
+      : SOURCE_SELECTOR;
+    const candidates = Array.from(root.querySelectorAll(selectors)).sort(
+      compareDocumentOrder
+    );
     const selectedElements = [];
-    const candidates = root.querySelectorAll(SOURCE_SELECTOR);
+    const seenTexts = new Set();
 
     for (const element of candidates) {
+      const isKnownCandidate = element.matches(SOURCE_SELECTOR);
       if (
         !isVisible(element) ||
         isExcludedFromRoot(element, root) ||
         !getSourceText(element) ||
-        isRedundantNestedElement(element, selectedElements)
+        isRedundantNestedElement(element, selectedElements) ||
+        (!isKnownCandidate && !isGenericTextCandidate(element))
       ) {
         continue;
       }
+
+      // Short repeated generic blocks are usually controls or repeated cards.
+      // Keep repeated article paragraphs; only apply this guard to generic UI.
+      const normalizedText = normalizeText(getSourceText(element));
+      if (
+        !isKnownCandidate &&
+        normalizedText.length < 120 &&
+        seenTexts.has(normalizedText)
+      ) {
+        continue;
+      }
+
+      seenTexts.add(normalizedText);
       selectedElements.push(element);
     }
 
@@ -197,27 +280,43 @@
     return length;
   }
 
-  function getRegionMetrics(root) {
-    const elements = collectReadableElements(root);
+  function getLinkTextLength(root) {
+    const links = root.querySelectorAll("a");
+    return Array.from(links).reduce((total, link) => {
+      if (!isVisible(link) || isExcludedFromRoot(link, root)) {
+        return total;
+      }
+      return total + normalizeText(link.textContent).length;
+    }, 0);
+  }
+
+  function getRegionMetrics(root, includeGeneric = false) {
+    const elements = collectReadableElements(root, includeGeneric);
     const textLength = elements.reduce(
       (total, element) => total + normalizeText(getSourceText(element)).length,
       0
     );
     const visibleTextLength = Math.max(getVisibleTextLength(root), 1);
+    const linkDensity = Math.min(
+      1,
+      getLinkTextLength(root) / visibleTextLength
+    );
 
     return {
       root,
       elements,
       textLength,
       blockCount: elements.length,
-      density: textLength / visibleTextLength
+      density: textLength / visibleTextLength,
+      linkDensity
     };
   }
 
   function isSubstantialArticle(metrics) {
     return (
       metrics.textLength >= MIN_SUBSTANTIAL_ARTICLE_CHARS &&
-      metrics.blockCount >= MIN_SUBSTANTIAL_ARTICLE_BLOCKS
+      metrics.blockCount >= MIN_SUBSTANTIAL_ARTICLE_BLOCKS &&
+      metrics.linkDensity <= MAX_LINK_DENSITY
     );
   }
 
@@ -238,10 +337,12 @@
         if (isExcludedRegionRoot(element)) {
           continue;
         }
-        semanticCandidates.push(getRegionMetrics(element));
+        semanticCandidates.push(getRegionMetrics(element, true));
       }
     }
 
+    // Prefer a substantial article over a broader main that may also contain
+    // related stories, comments or other page material.
     const substantialArticles = semanticCandidates.filter(
       (metrics) =>
         metrics.root.tagName.toLowerCase() === "article" &&
@@ -252,14 +353,16 @@
     }
 
     const substantialSemanticCandidates = semanticCandidates.filter(
-      (metrics) => isSubstantialArticle(metrics)
+      isSubstantialArticle
     );
     if (substantialSemanticCandidates.length > 0) {
       return chooseLongest(substantialSemanticCandidates);
     }
 
     return chooseLongest(
-      semanticCandidates.filter((metrics) => metrics.blockCount > 0)
+      semanticCandidates.filter(
+        (metrics) => metrics.blockCount > 0 && metrics.linkDensity <= MAX_LINK_DENSITY
+      )
     );
   }
 
@@ -270,10 +373,13 @@
         continue;
       }
 
-      const metrics = getRegionMetrics(element);
+      const metrics = getRegionMetrics(element, true);
+      // The minimum text and block count keeps a tiny card or control cluster
+      // from winning only because it has a high local density.
       if (
         metrics.textLength >= MIN_DENSITY_REGION_CHARS &&
-        metrics.blockCount >= MIN_DENSITY_REGION_BLOCKS
+        metrics.blockCount >= MIN_DENSITY_REGION_BLOCKS &&
+        metrics.linkDensity <= MAX_LINK_DENSITY
       ) {
         candidates.push(metrics);
       }
@@ -291,7 +397,7 @@
     return (
       findSemanticRegion() ||
       findDensityRegion() ||
-      getRegionMetrics(document.body)
+      getRegionMetrics(document.body, true)
     );
   }
 
@@ -321,6 +427,32 @@
     }
   }
 
+  function getHeadingLevel(element) {
+    const tagName = element.tagName.toLowerCase();
+    if (/^h[1-6]$/.test(tagName)) {
+      return Number(tagName.slice(1));
+    }
+
+    if ((element.getAttribute("role") || "").toLowerCase() === "heading") {
+      const level = Number(element.getAttribute("aria-level"));
+      return Number.isInteger(level) && level >= 1 && level <= 6
+        ? level
+        : null;
+    }
+
+    return null;
+  }
+
+  function getSourceDescriptor(element) {
+    const headingLevel = getHeadingLevel(element);
+    return {
+      id: "",
+      tag: element.tagName.toLowerCase(),
+      text: getSourceText(element),
+      level: headingLevel || 0
+    };
+  }
+
   function buildSourceMap() {
     clearHighlight();
     clearPreviousSourceIds();
@@ -329,11 +461,11 @@
     const elementsById = new Map();
     const sources = region.elements.map((element, index) => {
       const id = `${SOURCE_ID_PREFIX}${index + 1}`;
-      const tag = element.tagName.toLowerCase();
-      const text = getSourceText(element);
+      const source = getSourceDescriptor(element);
+      source.id = id;
       element.setAttribute(SOURCE_ATTRIBUTE, id);
       elementsById.set(id, element);
-      return { id, tag, text };
+      return source;
     });
 
     previousMappedElements = region.elements.slice();

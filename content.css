@@ -1,23 +1,100 @@
 /* DeepRead prototype: injected Reading Guide. No framework or build step is required. */
 @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Manrope:wght@500;600;700;800&display=swap");
 
-#deepread-guide {
+#deepread-shell {
   position: fixed;
   z-index: 2147483647;
-  top: 0;
-  right: 0;
-  width: min(340px, 90vw);
-  height: 100vh;
-  overflow-y: auto;
-  border-left: 1px solid #cad4d1;
-  border-top: 4px solid #183b56;
-  background: #f8f5ef;
-  box-shadow: -14px 0 34px rgba(20, 39, 45, 0.17);
+  inset: 0;
+  pointer-events: none;
   color: #183b56;
   font-family: "Manrope", Arial, sans-serif;
 }
 
-#deepread-guide * { box-sizing: border-box; }
+#deepread-shell *,
+#deepread-selection-action * { box-sizing: border-box; }
+
+#deepread-guide {
+  position: absolute;
+  top: 50%;
+  right: 52px;
+  width: min(368px, calc(100vw - 72px));
+  max-height: min(82vh, 760px);
+  overflow-y: auto;
+  border: 1px solid #cad4d1;
+  border-top: 4px solid #183b56;
+  border-radius: 2px;
+  background: #f8f5ef;
+  box-shadow: -14px 18px 34px rgba(20, 39, 45, 0.18);
+  color: #183b56;
+  pointer-events: auto;
+  transform: translateY(-50%);
+  transition: opacity 180ms ease, transform 180ms ease, visibility 180ms ease;
+}
+
+#deepread-shell:not(.deepread-shell--expanded) #deepread-guide {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(18px, -50%);
+}
+
+.deepread-rail-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  display: grid;
+  width: 42px;
+  min-height: 124px;
+  gap: 7px;
+  align-content: center;
+  justify-items: center;
+  padding: 12px 7px;
+  border: 1px solid #b9c9c7;
+  border-right: 0;
+  border-radius: 3px 0 0 3px;
+  background: #edf3f1;
+  box-shadow: -5px 8px 20px rgba(20, 39, 45, 0.12);
+  color: #294854;
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateY(-50%);
+  transition: background 160ms ease, box-shadow 160ms ease, width 160ms ease;
+}
+
+.deepread-rail-toggle:hover,
+.deepread-rail-toggle:focus-visible {
+  width: 48px;
+  outline: 0;
+  background: #f8f5ef;
+  box-shadow: -8px 10px 22px rgba(20, 39, 45, 0.16);
+}
+
+.deepread-rail-mark {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #183b56;
+  color: #f8f5ef;
+  font: 800 11px/1 "Manrope", Arial, sans-serif;
+}
+
+.deepread-rail-label {
+  color: #55707d;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.deepread-rail-arrow {
+  color: #b35f46;
+  font-size: 16px;
+  line-height: 1;
+}
 
 .deepread-header {
   position: relative;
@@ -175,11 +252,46 @@
 }
 
 .deepread-structure-list {
+  position: relative;
   display: grid;
   gap: 5px;
   margin: 0;
-  padding: 0;
+  padding: 0 0 0 9px;
   list-style: none;
+}
+
+.deepread-structure-list::before {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 2px;
+  width: 1px;
+  content: "";
+  background: #c4d2ce;
+}
+
+.deepread-structure-item {
+  position: relative;
+}
+
+.deepread-structure-item::before {
+  position: absolute;
+  top: 15px;
+  left: -10px;
+  width: 5px;
+  height: 5px;
+  content: "";
+  border: 1px solid #8ba5ac;
+  border-radius: 50%;
+  background: #f8f5ef;
+  transform: translateX(-50%);
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.deepread-structure-item.is-active::before {
+  border-color: #b35f46;
+  background: #b35f46;
+  transform: translateX(-50%) scale(1.35);
 }
 
 .deepread-structure-item[data-level="3"],
@@ -331,4 +443,73 @@
 .deepread-source-highlight {
   outline: 3px solid #b35f46 !important;
   outline-offset: 4px !important;
+}
+
+#deepread-selection-action {
+  position: fixed;
+  z-index: 2147483647;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 10px;
+  align-items: center;
+  min-width: 172px;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 8px 9px;
+  border: 1px solid #b9c9c7;
+  border-left: 3px solid #b35f46;
+  border-radius: 2px;
+  background: #f8f5ef;
+  box-shadow: 0 8px 22px rgba(20, 39, 45, 0.18);
+  color: #183b56;
+  font-family: "Manrope", Arial, sans-serif;
+  pointer-events: auto;
+}
+
+.deepread-selection-kicker {
+  grid-column: 1 / -1;
+  color: #608089;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.deepread-selection-explain {
+  justify-self: start;
+  padding: 6px 12px;
+  border: 1px solid #b35f46;
+  border-radius: 2px;
+  background: #b35f46;
+  color: #fffaf3;
+  font: 700 11px/1 "Manrope", Arial, sans-serif;
+  cursor: pointer;
+}
+
+.deepread-selection-explain:hover,
+.deepread-selection-explain:focus-visible {
+  background: #8f4939;
+  outline: 2px solid rgba(179, 95, 70, 0.24);
+  outline-offset: 2px;
+}
+
+.deepread-selection-status {
+  grid-column: 1 / -1;
+  color: #795f54;
+  font: 600 11px/1.3 "Fraunces", Georgia, serif;
+}
+
+@media (max-width: 520px) {
+  #deepread-guide {
+    right: 46px;
+    width: calc(100vw - 58px);
+    max-height: 86vh;
+  }
+
+  .deepread-rail-toggle {
+    width: 36px;
+  }
+
+  .deepread-rail-toggle:hover,
+  .deepread-rail-toggle:focus-visible {
+    width: 42px;
+  }
 }
