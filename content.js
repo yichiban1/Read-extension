@@ -1,21 +1,13 @@
 // DeepRead prototype content script.
 // Reads the current page, extracts its main text (article mode first,
-// whole-page fallback), and drafts a short local summary in the side panel.
+// whole-page fallback), and builds a source-linked page guide in the side panel.
 
 const GUIDE_ID = "deepread-guide";
 const WORDS_PER_MINUTE = 220;
-const SUMMARY_SENTENCES = 3;
 const MIN_ARTICLE_CHARS = 200;
 const MIN_PAGE_TEXT_CHARS = 60;
-
-const STOP_WORDS = new Set([
-  "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for", "with",
-  "is", "are", "was", "were", "be", "been", "this", "that", "it", "its", "as",
-  "at", "by", "from", "not", "you", "your", "we", "our", "they", "their",
-  "he", "she", "his", "her", "about", "into", "over", "after", "can", "will",
-  "的", "了", "是", "在", "我", "有", "和", "就", "不", "人", "都", "一个",
-  "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看"
-]);
+const MAX_FALLBACK_STRUCTURE_ITEMS = 6;
+const MIN_FALLBACK_PASSAGE_CHARS = 36;
 
 function getPageContext() {
   return {
@@ -87,63 +79,156 @@ function estimateReadingMinutes(wordCount) {
   return Math.max(1, Math.round(wordCount / WORDS_PER_MINUTE));
 }
 
-function tokenize(sentence) {
-  return (sentence.toLowerCase().match(/[a-z0-9'’]+|[\u4e00-\u9fff]/g) || [])
-    .filter((token) =>
-      !STOP_WORDS.has(token) &&
-      (token.length > 1 || /[\u4e00-\u9fff]/.test(token))
-    );
+function countExtractedParagraphs(article) {
+  if (!article.content) {
+    return 0;
+  }
+
+  if (typeof article.content.querySelectorAll === "function") {
+    return article.content.querySelectorAll("p").length;
+  }
+
+  const contentContainer = document.createElement("div");
+  contentContainer.innerHTML = String(article.content);
+  return contentContainer.querySelectorAll("p").length;
 }
 
-function splitSentences(text) {
-  return text
-    .replace(/\s+/g, " ")
-    .split(/(?<=[.!?。！？])\s*/)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
-}
+function getStructureSources(sourceMap) {
+  const sources = sourceMap && Array.isArray(sourceMap.sources)
+    ? sourceMap.sources
+    : [];
+  const headings = sources.filter((source) => /^h[1-6]$/.test(source.tag));
 
-// Extractive draft summary: score sentences by word frequency,
-// keep the strongest few in their original order.
-// Accepts shorter sentences so brief pages can still get a summary.
-function buildSummary(text, maxSentences) {
-  let sentences = splitSentences(text).filter(
-    (sentence) => sentence.length >= 40 && sentence.length <= 320
+  if (headings.length >= 2) {
+    return { mode: "headings", sources: headings };
+  }
+
+  const contentBlocks = sources.filter((source) =>
+    ["p", "li", "blockquote", "pre"].includes(source.tag)
   );
-  if (sentences.length === 0) {
-    sentences = splitSentences(text).filter(
-      (sentence) => sentence.length >= 12 && sentence.length <= 320
-    );
-  }
-  if (sentences.length === 0) {
-    return [];
+  const substantialBlocks = contentBlocks.filter(
+    (source) => source.text.trim().length >= MIN_FALLBACK_PASSAGE_CHARS
+  );
+  const fallbackBlocks = (substantialBlocks.length > 0
+    ? substantialBlocks
+    : contentBlocks
+  ).slice(0, MAX_FALLBACK_STRUCTURE_ITEMS);
+
+  if (headings.length === 1) {
+    return {
+      mode: "passages",
+      sources: [headings[0], ...fallbackBlocks]
+        .filter((source, index, list) =>
+          list.findIndex((candidate) => candidate.id === source.id) === index
+        )
+        .slice(0, MAX_FALLBACK_STRUCTURE_ITEMS + 1)
+    };
   }
 
-  const frequency = new Map();
-  for (const sentence of sentences) {
-    for (const token of tokenize(sentence)) {
-      frequency.set(token, (frequency.get(token) || 0) + 1);
+  return { mode: "passages", sources: fallbackBlocks };
+}
+
+function shortenSourceText(text, maxLength = 120) {
+  const compactText = text.replace(/\s+/g, " ").trim();
+  return compactText.length > maxLength
+    ? `${compactText.slice(0, maxLength - 1).trimEnd()}…`
+    : compactText;
+}
+
+function renderStructureItem(list, source, index, mode) {
+  const item = document.createElement("li");
+  item.className = "deepread-structure-item";
+  item.dataset.level = mode === "headings" ? source.tag.slice(1) : "0";
+
+  const button = document.createElement("button");
+  button.className = "deepread-structure-button";
+  button.type = "button";
+  button.dataset.sourceId = source.id;
+  button.setAttribute(
+    "aria-label",
+    `Jump to ${mode === "headings" ? source.text : `passage ${index + 1}`}`
+  );
+
+  const number = document.createElement("span");
+  number.className = "deepread-structure-number";
+  number.textContent = String(index + 1).padStart(2, "0");
+
+  const copy = document.createElement("span");
+  copy.className = "deepread-structure-copy";
+
+  const label = document.createElement("strong");
+  label.className = "deepread-structure-label";
+  label.textContent = mode === "headings"
+    ? source.text
+    : `Passage ${String(index + 1).padStart(2, "0")}`;
+
+  const meta = document.createElement("small");
+  meta.className = "deepread-structure-meta";
+  meta.textContent = `${source.tag.toUpperCase()} · LIVE SOURCE`;
+
+  copy.append(label, meta);
+  if (mode === "passages") {
+    const excerpt = document.createElement("span");
+    excerpt.className = "deepread-structure-excerpt";
+    excerpt.textContent = shortenSourceText(source.text);
+    copy.append(excerpt);
+  }
+
+  const arrow = document.createElement("span");
+  arrow.className = "deepread-structure-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+  arrow.textContent = "↗";
+
+  button.append(number, copy, arrow);
+  button.addEventListener("click", () => {
+    const didNavigate = globalThis.DeepReadSourceMapping?.scrollToSourceId?.(source.id);
+    if (!didNavigate) {
+      return;
     }
+
+    list.querySelectorAll(".deepread-structure-button.is-active").forEach((activeButton) => {
+      activeButton.classList.remove("is-active");
+      activeButton.removeAttribute("aria-current");
+    });
+    button.classList.add("is-active");
+    button.setAttribute("aria-current", "location");
+  });
+
+  item.append(button);
+  return item;
+}
+
+function renderStructure(guide, sourceMap) {
+  const list = guide.querySelector(".deepread-structure-list");
+  const count = guide.querySelector(".deepread-structure-count");
+  const empty = guide.querySelector(".deepread-structure-empty");
+  const note = guide.querySelector(".deepread-structure-note");
+  const structure = getStructureSources(sourceMap);
+
+  list.replaceChildren();
+  count.textContent = structure.sources.length
+    ? `${structure.sources.length} ${structure.mode === "headings" ? "headings" : "reading points"}`
+    : "No mapped structure";
+  note.textContent = structure.mode === "headings"
+    ? "Click a heading to jump to its live passage."
+    : "No heading outline was available, so these points use real page text.";
+
+  if (structure.sources.length === 0) {
+    empty.hidden = false;
+    return;
   }
 
-  return sentences
-    .map((sentence, index) => {
-      const tokens = tokenize(sentence);
-      const score =
-        tokens.reduce((sum, token) => sum + (frequency.get(token) || 0), 0) /
-        Math.sqrt(tokens.length || 1);
-      return { index, score };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxSentences)
-    .sort((a, b) => a.index - b.index)
-    .map((item) => sentences[item.index]);
+  empty.hidden = true;
+  structure.sources.forEach((source, index) => {
+    list.append(renderStructureItem(list, source, index, structure.mode));
+  });
 }
 
 function createGuide() {
   const { title, hostname } = getPageContext();
+  let sourceMap = null;
   try {
-    globalThis.DeepReadSourceMapping.buildSourceMap();
+    sourceMap = globalThis.DeepReadSourceMapping.buildSourceMap();
   } catch (error) {
     console.warn("DeepRead source mapping failed.", error);
   }
@@ -155,8 +240,8 @@ function createGuide() {
   guide.innerHTML = `
     <header class="deepread-header">
       <div>
-        <p>DEEPREAD / PROTOTYPE</p>
-        <h1>Reading guide</h1>
+        <p>DEEPREAD / SOURCE GUIDE</p>
+        <h1>Page guide</h1>
       </div>
       <button class="deepread-close" type="button" aria-label="Close guide">×</button>
     </header>
@@ -167,30 +252,42 @@ function createGuide() {
       <em class="deepread-page-hostname"></em>
     </section>
 
-    <section class="deepread-analysis">
-      <span>READING THE PAGE…</span>
-      <div class="deepread-loading">Extracting text…</div>
-      <div class="deepread-result" hidden>
-        <div class="deepread-stats">
-          <div class="deepread-stat-row"><b>Words</b><i class="deepread-stat-words"></i></div>
-          <div class="deepread-stat-row"><b>Reading time</b><i class="deepread-stat-time"></i></div>
-          <div class="deepread-stat-row deepread-stat-paras-row"><b>Paragraphs</b><i class="deepread-stat-paras"></i></div>
-          <em class="deepread-article-title"></em>
-          <small class="deepread-article-meta"></small>
-        </div>
-        <div class="deepread-summary">
-          <span>DRAFT SUMMARY — KEY POINTS</span>
-          <ul class="deepread-summary-list"></ul>
-          <small>Local extractive draft. A model-based guide is planned.</small>
-        </div>
-      </div>
-      <div class="deepread-failure" hidden>
-        <p>There is almost no readable text on this page.</p>
-        <small>DeepRead works on any page that contains actual written content.</small>
-      </div>
+    <section class="deepread-guide-intro">
+      <span>LIVE PAGE GUIDE</span>
+      <p>Follow the page's own structure, then jump straight back to the source.</p>
     </section>
 
-    <footer>Local prototype · nothing leaves your browser.</footer>
+    <section class="deepread-analysis">
+      <section class="deepread-structure" aria-labelledby="deepread-structure-title">
+        <div class="deepread-structure-heading">
+          <span id="deepread-structure-title">PAGE STRUCTURE</span>
+          <small class="deepread-structure-count"></small>
+        </div>
+        <ol class="deepread-structure-list"></ol>
+        <p class="deepread-structure-empty" hidden>No useful source blocks were found for a guide.</p>
+        <small class="deepread-structure-note"></small>
+      </section>
+
+      <section class="deepread-snapshot" aria-label="Page snapshot">
+        <span>PAGE SNAPSHOT</span>
+        <div class="deepread-snapshot-loading">Reading details…</div>
+        <div class="deepread-result" hidden>
+          <div class="deepread-stats">
+            <div class="deepread-stat-row"><b>Words</b><i class="deepread-stat-words"></i></div>
+            <div class="deepread-stat-row"><b>Reading time</b><i class="deepread-stat-time"></i></div>
+            <div class="deepread-stat-row deepread-stat-paras-row"><b>Blocks</b><i class="deepread-stat-paras"></i></div>
+            <em class="deepread-article-title"></em>
+            <small class="deepread-article-meta"></small>
+          </div>
+        </div>
+        <div class="deepread-failure" hidden>
+          <p>There is not enough readable text for a page snapshot.</p>
+          <small>The source guide can still work when mapped passages are available.</small>
+        </div>
+      </section>
+    </section>
+
+    <footer>Live source layer · nothing leaves your browser.</footer>
   `;
 
   guide.querySelector(".deepread-page-title").textContent = title;
@@ -198,12 +295,13 @@ function createGuide() {
   guide.querySelector(".deepread-close").addEventListener("click", () => guide.remove());
   document.documentElement.appendChild(guide);
 
+  renderStructure(guide, sourceMap);
   fillAnalysis(guide);
 }
 
 function fillAnalysis(guide) {
   const analysis = analysePage();
-  guide.querySelector(".deepread-loading").remove();
+  guide.querySelector(".deepread-snapshot-loading").remove();
 
   if (!analysis) {
     guide.querySelector(".deepread-failure").hidden = false;
@@ -222,7 +320,7 @@ function fillAnalysis(guide) {
 
   result.querySelector(".deepread-stat-paras").textContent =
     mode === "article"
-      ? String(article.content ? article.content.querySelectorAll("p").length : 0)
+      ? String(countExtractedParagraphs(article))
       : String(article.paragraphCount);
 
   result.querySelector(".deepread-article-title").textContent =
@@ -235,17 +333,6 @@ function fillAnalysis(guide) {
     .filter(Boolean)
     .join(" · ");
 
-  const list = result.querySelector(".deepread-summary-list");
-  const keyPoints = buildSummary(text, SUMMARY_SENTENCES);
-  if (keyPoints.length === 0) {
-    list.innerHTML = `<li>Text was captured, but it is too short to summarise.</li>`;
-  } else {
-    for (const point of keyPoints) {
-      const item = document.createElement("li");
-      item.textContent = point;
-      list.appendChild(item);
-    }
-  }
 }
 
 function toggleGuide() {

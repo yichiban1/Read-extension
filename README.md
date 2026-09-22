@@ -1,45 +1,37 @@
-# DeepRead — 项目进度记录
+# DeepRead
 
-这是一个可以直接在 VSCode 里打开的 **Chrome Manifest V3 扩展**项目。
+DeepRead is a small Chrome Manifest V3 prototype that keeps the original webpage as the main reading surface. It adds a reversible source guide beside the page instead of opening a separate chatbot or reader.
 
-当前是一个可运行的早期原型：工具栏 popup 向 content script 发消息，在页面右侧注入一个 Reading Guide 侧边栏，侧边栏会对当前网页做**本地正文提取、关键信息统计和摘要草稿**。整个过程在浏览器内完成，没有任何数据外发。
+## Current prototype
 
-## 当前已实现
+- The popup opens and closes a right-side Reading Guide.
+- Mozilla Readability is used only as a local extraction aid for page statistics and metadata.
+- `source-mapping.js` finds a meaningful live reading region and maps real headings, paragraphs, list items, quotations and code blocks.
+- Mapped elements receive deterministic `data-deepread-source-id` attributes for the current page state.
+- The Page Guide prefers real `h1`–`h6` headings. Pages without enough headings show real mapped passages instead.
+- Clicking a guide item smoothly scrolls the original webpage to its live source and temporarily highlights it.
+- Word count, reading time and extraction mode remain as secondary local page statistics.
 
-1. MV3 扩展骨架：popup → content script 消息通信，面板注入 / 移除。
-2. 双模式文本提取：
-   - **文章模式**：接入 `@mozilla/readability`（`vendor/readability.js`，无构建步骤），提取文章标题、作者、站点名；
-   - **整页模式**：Readability 认不出的页面自动退回，剥离导航/脚本等页面骨架后抓取全部可见文本。
-3. 阅读统计：字数（中英文兼容）、预估阅读时长、段落数；面板上会标注当前用的是哪种提取模式。
-4. 本地抽取式摘要草稿：按词频给句子打分，选出最多 3 个关键句作为要点列表（纯前端启发式，非 LLM）；短内容页面也能出结果。
-5. 失败兜底：页面上几乎没有文字时提示"无可读文本"，不会崩溃。
+There is no LLM provider, backend, chat UI, text explanation flow or critical-reading analysis in this prototype yet. No page content is sent anywhere.
 
-## 尚未实现（后续计划）
+## Run in Chrome
 
-- LLM 生成的三段式导读与摘要
-- 论证结构树（点击节点跳转原文段落）
-- 划词白话解释
-- 争议点标注
+1. Open this folder in VS Code or Explorer.
+2. Open `chrome://extensions` in Chrome and enable Developer mode.
+3. Choose **Load unpacked** and select this folder.
+4. Open a normal `http` or `https` text-heavy webpage. Chrome internal pages and the Web Store are not supported.
+5. Click the DeepRead toolbar icon, then choose **Open Reading Guide**.
+6. Click a heading or reading point in the guide to jump to its real passage on the page.
 
-## 文件说明
+After changing extension files, use **Reload** on the extension card before testing again.
 
-| 文件 | 作用 |
+## Main files
+
+| File | Purpose |
 |---|---|
-| `manifest.json` | MV3 配置；content script 先加载 `vendor/readability.js` 再加载 `content.js`。 |
-| `popup.html`, `popup.css`, `popup.js` | 工具栏菜单，发送"打开 Reading Guide"消息。 |
-| `background.js` | 最小 service worker，确认安装。 |
-| `vendor/readability.js` | Mozilla Readability 库的浏览器版本。 |
-| `content.js`, `content.css` | 正文提取 + 摘要 + 注入/移除 Reading Guide 面板。 |
-
-## 在 Chrome 里运行
-
-1. 用 VSCode 打开本文件夹。
-2. 打开 Chrome，访问 `chrome://extensions`。
-3. 右上角开启**开发者模式**。
-4. 点击**加载已解压的扩展程序**，选择整个文件夹。
-5. 打开一个普通的 `http` / `https` 文章页面（不要用 `chrome://` 或应用商店页面）。
-6. 点击 DeepRead 图标，选择 **Open Reading Guide**。
-
-## 下一步
-
-把提取到的正文文本交给 LLM，替换当前的抽取式摘要为生成式导读；然后基于标题层级做论证树的雏形。
+| `manifest.json` | Manifest V3 configuration and content-script order. |
+| `popup.html`, `popup.css`, `popup.js` | Small toolbar popup that toggles the guide. |
+| `content.js`, `content.css` | Guide UI, local page statistics, source-linked structure interaction and styling. |
+| `source-mapping.js` | Live reading-region selection, source IDs, source data and scroll/highlight navigation. |
+| `vendor/readability.js` | Browser copy of Mozilla Readability. |
+| `background.js` | Minimal extension service worker. |
