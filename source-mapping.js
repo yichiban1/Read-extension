@@ -488,7 +488,10 @@
     }
 
     clearHighlight();
-    element.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    const behavior = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth";
+    element.scrollIntoView({ behavior, block: "center", inline: "nearest" });
     element.classList.add(HIGHLIGHT_CLASS);
     highlightedElement = element;
     highlightTimer = setTimeout(() => {

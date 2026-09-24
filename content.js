@@ -1,10 +1,11 @@
 // DeepRead content script.
 // The original webpage remains the reading surface. DeepRead adds a quiet
-// launcher, a source-linked Page Guide, and a selection-first Explain flow.
+// launcher, a spatial source-linked Reading Atlas, and selection-first Explain.
 
 const GUIDE_ID = "deepread-guide";
 const SHELL_ID = "deepread-shell";
 const RAIL_ID = "deepread-rail-toggle";
+const SOURCE_ANNOTATION_ID = "deepread-source-annotation";
 const SELECTION_ACTION_ID = "deepread-selection-action";
 const EXPLANATION_CARD_ID = "deepread-explanation-card";
 const SOURCE_ATTRIBUTE = "data-deepread-source-id";
@@ -23,6 +24,9 @@ let dismissedSelectionText = "";
 let selectionRequestToken = 0;
 let dynamicRefreshTimer = null;
 let dynamicObserver = null;
+let sourceMapNeedsRefresh = true;
+let sourceAnnotationState = null;
+let sourceAnnotationFrame = 0;
 
 function getPageContext() {
   return {
@@ -225,59 +229,100 @@ function observeStructureSources(guide, sourceMap) {
   guide._deepreadStructureObserver = observer;
 }
 
-function renderStructureItem(list, source, index, mode) {
+function getSourceById(sourceMap, sourceId) {
+  return (sourceMap?.sources || []).find((source) => source.id === sourceId) || null;
+}
+
+function navigateToAtlasSource(guide, sourceId, label, sourceText) {
+  const mapping = globalThis.DeepReadSourceMapping;
+  const sourceMap = mapping?.getCurrentMap?.();
+  const sourceElement = sourceMap?.elementsById?.get(sourceId);
+  if (!sourceElement?.isConnected || !mapping?.scrollToSourceId?.(sourceId)) {
+    showStructureError(guide, "This source is no longer available. Reopen the Atlas to refresh the page map.");
+    return;
+  }
+
+  const shell = guide.closest(`#${SHELL_ID}`);
+  if (shell) {
+    setGuideExpanded(shell, false);
+  }
+  showSourceAnnotation({ label, sourceId, sourceText, sourceElement });
+  scheduleSourceAnnotationPosition();
+}
+
+function createAtlasNode({ label, kind, sourceIds, sourceMap, index, isLiveSource = false }) {
   const item = document.createElement("li");
-  const level = getSourceLevel(source);
-  item.className = "deepread-structure-item";
-  item.dataset.level = level || "0";
+  const firstSourceId = sourceIds[0];
+  const source = getSourceById(sourceMap, firstSourceId);
+  const sourceText = source?.text || "";
+  const displayLabel = String(label || "Source passage").trim();
+  item.className = "deepread-structure-item deepread-atlas-node";
+  item.dataset.atlasSize = ["feature", "medium", "narrow", "wide", "medium", "narrow"][index % 6];
 
   const button = document.createElement("button");
-  button.className = "deepread-structure-button";
+  button.className = "deepread-structure-button deepread-atlas-node-button";
   button.type = "button";
-  button.dataset.sourceIds = source.id;
-  button.setAttribute(
-    "aria-label",
-    `Jump to ${mode === "headings" ? source.text : `reading point ${index + 1}`}`
-  );
+  button.dataset.sourceIds = sourceIds.join(",");
+  button.setAttribute("aria-label", `Preview and follow ${displayLabel}`);
 
   const number = document.createElement("span");
-  number.className = "deepread-structure-number";
+  number.className = "deepread-structure-number deepread-atlas-number";
   number.textContent = String(index + 1).padStart(2, "0");
 
   const copy = document.createElement("span");
-  copy.className = "deepread-structure-copy";
-
-  const label = document.createElement("strong");
-  label.className = "deepread-structure-label";
-  label.textContent = mode === "headings"
-    ? source.text
-    : `Live point ${String(index + 1).padStart(2, "0")}`;
+  copy.className = "deepread-structure-copy deepread-atlas-copy";
 
   const meta = document.createElement("small");
-  meta.className = "deepread-structure-meta";
-  meta.textContent = `${source.tag.toUpperCase()} · LIVE SOURCE`;
+  meta.className = "deepread-structure-meta deepread-atlas-meta";
+  meta.textContent = isLiveSource
+    ? `${kind.toUpperCase()} · LIVE SOURCE`
+    : `${kind.toUpperCase()} · ${sourceIds.length} SOURCE${sourceIds.length === 1 ? "" : "S"}`;
 
-  copy.append(label, meta);
-  if (mode === "passages") {
-    const excerpt = document.createElement("span");
-    excerpt.className = "deepread-structure-excerpt";
-    excerpt.textContent = shortenSourceText(source.text);
-    copy.append(excerpt);
-  }
+  const title = document.createElement("strong");
+  title.className = "deepread-structure-label deepread-atlas-title";
+  title.textContent = displayLabel;
+
+  const preview = document.createElement("span");
+  preview.className = "deepread-atlas-preview";
+  preview.textContent = sourceText
+    ? shortenSourceText(sourceText, 260)
+    : "The cited passage is no longer available on this page.";
 
   const arrow = document.createElement("span");
-  arrow.className = "deepread-structure-arrow";
+  arrow.className = "deepread-structure-arrow deepread-atlas-arrow";
   arrow.setAttribute("aria-hidden", "true");
   arrow.textContent = "↗";
 
+  copy.append(meta, title, preview);
   button.append(number, copy, arrow);
   button.addEventListener("click", () => {
-    const didNavigate = globalThis.DeepReadSourceMapping?.scrollToSourceId?.(source.id);
-    if (didNavigate) {
-      setActiveStructureNode(list.closest("#deepread-guide"), source.id);
+    if (source) {
+      navigateToAtlasSource(
+        document.getElementById(GUIDE_ID),
+        firstSourceId,
+        displayLabel,
+        source.text
+      );
     }
   });
   item.append(button);
+  return item;
+}
+
+function renderStructureItem(list, source, index, mode, sourceMap) {
+  const label = mode === "headings"
+    ? source.text
+    : shortenSourceText(source.text, 110) || `Live source ${String(index + 1).padStart(2, "0")}`;
+  const item = createAtlasNode({
+    label,
+    kind: source.tag || "source",
+    sourceIds: [source.id],
+    sourceMap,
+    index,
+    isLiveSource: true
+  });
+  item.dataset.level = getSourceLevel(source) || "0";
+  list.append(item);
   return item;
 }
 
@@ -326,7 +371,7 @@ function renderFallbackStructure(guide, sourceMap, label = "LIVE SOURCE OUTLINE"
   }
 
   structure.sources.forEach((source, index) => {
-    list.append(renderStructureItem(list, source, index, structure.mode));
+    renderStructureItem(list, source, index, structure.mode, sourceMap);
   });
   observeStructureSources(guide, sourceMap);
 }
@@ -354,47 +399,16 @@ function renderAiPageMap(guide, nodes, sourceMap) {
   const list = guide.querySelector(".deepread-structure-list");
   guide.querySelector(".deepread-structure-count").textContent = `${nodes.length} AI nodes`;
   guide.querySelector(".deepread-structure-note").textContent =
-    "Grounded in live source blocks. Click a node to follow its supporting passage.";
+    "Previews quote the first cited passage. Choose a node to return to that source.";
 
   nodes.forEach((node, index) => {
-    const item = document.createElement("li");
-    item.className = "deepread-structure-item";
-    item.dataset.level = "0";
-
-    const button = document.createElement("button");
-    button.className = "deepread-structure-button";
-    button.type = "button";
-    button.dataset.sourceIds = node.sourceIds.join(",");
-    button.setAttribute("aria-label", `Jump to ${node.label}`);
-
-    const number = document.createElement("span");
-    number.className = "deepread-structure-number";
-    number.textContent = String(index + 1).padStart(2, "0");
-
-    const copy = document.createElement("span");
-    copy.className = "deepread-structure-copy";
-    const label = document.createElement("strong");
-    label.className = "deepread-structure-label";
-    label.textContent = node.label;
-    const meta = document.createElement("small");
-    meta.className = "deepread-structure-meta";
-    meta.textContent = `${node.kind.toUpperCase()} · ${node.sourceIds.length} LIVE SOURCE${node.sourceIds.length === 1 ? "" : "S"}`;
-    copy.append(label, meta);
-
-    const arrow = document.createElement("span");
-    arrow.className = "deepread-structure-arrow";
-    arrow.setAttribute("aria-hidden", "true");
-    arrow.textContent = "↗";
-
-    button.append(number, copy, arrow);
-    button.addEventListener("click", () => {
-      const firstSourceId = node.sourceIds[0];
-      if (globalThis.DeepReadSourceMapping?.scrollToSourceId?.(firstSourceId)) {
-        setActiveStructureNode(guide, firstSourceId);
-      }
-    });
-    item.append(button);
-    list.append(item);
+    list.append(createAtlasNode({
+      label: node.label,
+      kind: node.kind,
+      sourceIds: node.sourceIds,
+      sourceMap,
+      index
+    }));
   });
 
   observeStructureSources(guide, sourceMap);
@@ -402,8 +416,11 @@ function renderAiPageMap(guide, nodes, sourceMap) {
 
 function buildSourceMapSafely() {
   try {
-    return globalThis.DeepReadSourceMapping?.buildSourceMap?.() || null;
+    const sourceMap = globalThis.DeepReadSourceMapping?.buildSourceMap?.() || null;
+    sourceMapNeedsRefresh = !sourceMap;
+    return sourceMap;
   } catch (error) {
+    sourceMapNeedsRefresh = true;
     console.warn("DeepRead source mapping failed.", error);
     return null;
   }
@@ -447,11 +464,20 @@ async function refreshGuide(guide) {
   const page = getPageContext();
   guide.querySelector(".deepread-page-title").textContent = page.title;
   guide.querySelector(".deepread-page-hostname").textContent = page.hostname;
-  const sourceMap = buildSourceMapSafely();
+  const currentMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
+  const needsFreshMap = sourceMapNeedsRefresh || !currentMap?.root?.isConnected;
+  const sourceMap = needsFreshMap ? buildSourceMapSafely() : currentMap;
   guide._deepreadSourceMap = sourceMap;
 
-  renderStructureLoading(guide);
   fillAnalysis(guide);
+  if (needsFreshMap) {
+    guide._deepreadPageMapCache = null;
+  }
+  if (guide._deepreadPageMapCache?.sourceMap === sourceMap) {
+    return;
+  }
+
+  renderStructureLoading(guide);
 
   const sourceCount = sourceMap?.sources?.length || 0;
   const totalText = (sourceMap?.sources || []).reduce(
@@ -486,6 +512,7 @@ async function refreshGuide(guide) {
       return;
     }
 
+    guide._deepreadPageMapCache = { sourceMap, nodes };
     renderAiPageMap(guide, nodes, sourceMap);
   } catch (error) {
     if (guide.isConnected && guide._deepreadMapRequestId === requestId) {
@@ -499,13 +526,18 @@ function setGuideExpanded(shell, expanded) {
   const rail = shell.querySelector(`#${RAIL_ID}`);
   const guide = shell.querySelector(`#${GUIDE_ID}`);
   shell.classList.toggle("deepread-shell--expanded", expanded);
+  shell.classList.toggle("deepread-shell--atlas-open", expanded);
   rail.setAttribute("aria-expanded", String(expanded));
-  rail.setAttribute("aria-label", expanded ? "Collapse DeepRead guide" : "Open DeepRead guide");
+  rail.setAttribute("aria-label", expanded ? "Close Reading Atlas" : "Open Reading Atlas");
   guide.setAttribute("aria-hidden", String(!expanded));
+  guide.inert = !expanded;
 
   if (expanded) {
+    removeSourceAnnotation();
     void refreshGuide(guide);
+    requestAnimationFrame(() => guide.querySelector(".deepread-close")?.focus());
   } else {
+    guide._deepreadStructureObserver?.disconnect();
     dismissSelectionAction();
     removeExplanationCard();
     rail.focus();
@@ -528,71 +560,75 @@ function createDeepReadShell() {
   rail.type = "button";
   rail.setAttribute("aria-expanded", "false");
   rail.setAttribute("aria-controls", GUIDE_ID);
-  rail.setAttribute("aria-label", "Open DeepRead guide");
-  rail.innerHTML = '<span class="deepread-rail-mark" aria-hidden="true">D</span><span class="deepread-rail-label">Guide</span><span class="deepread-rail-arrow" aria-hidden="true">›</span>';
+  rail.setAttribute("aria-label", "Open Reading Atlas");
+  rail.innerHTML = '<span class="deepread-rail-mark" aria-hidden="true">D</span><span class="deepread-rail-label">Atlas</span><span class="deepread-rail-arrow" aria-hidden="true">↗</span>';
 
   const guide = document.createElement("aside");
   guide.id = GUIDE_ID;
-  guide.setAttribute("aria-label", "DeepRead Page Guide");
+  guide.setAttribute("role", "dialog");
+  guide.setAttribute("aria-modal", "true");
+  guide.setAttribute("aria-label", "DeepRead Reading Atlas");
   guide.setAttribute("aria-hidden", "true");
+  guide.tabIndex = -1;
+  guide.inert = true;
   guide.innerHTML = `
-    <header class="deepread-header">
-      <div>
-        <p>DEEPREAD / SOURCE GUIDE</p>
-        <h1>Page guide</h1>
-      </div>
-      <button class="deepread-close" type="button" aria-label="Collapse guide">×</button>
-    </header>
+    <button class="deepread-atlas-scrim" type="button" aria-label="Close Reading Atlas"></button>
+    <main class="deepread-atlas-panel">
+      <header class="deepread-atlas-topbar">
+        <div class="deepread-atlas-brand"><span class="deepread-atlas-brand-mark">D</span><span>DEEPREAD / READING ATLAS</span></div>
+        <button class="deepread-close" type="button" aria-label="Return to the original page"><span>Return to page</span><b aria-hidden="true">×</b></button>
+      </header>
 
-    <section class="deepread-page-context">
-      <span>ORIGINAL PAGE</span>
-      <strong class="deepread-page-title"></strong>
-      <em class="deepread-page-hostname"></em>
-    </section>
+      <section class="deepread-atlas-masthead">
+        <div class="deepread-atlas-page-context">
+          <span class="deepread-atlas-kicker">ORIGINAL PAGE / <span class="deepread-page-hostname"></span></span>
+          <h1 class="deepread-page-title"></h1>
+          <p>Explore the page through passages that lead back to the original text.</p>
+        </div>
+        <section class="deepread-snapshot" aria-label="Reading estimate">
+          <div class="deepread-snapshot-loading">Reading details…</div>
+          <div class="deepread-result" hidden>
+            <div class="deepread-stats">
+              <span>PAGE AT A GLANCE</span>
+              <div class="deepread-stat-row"><b>Words</b><i class="deepread-stat-words"></i></div>
+              <div class="deepread-stat-row"><b>Reading time</b><i class="deepread-stat-time"></i></div>
+              <div class="deepread-stat-row deepread-stat-paras-row"><b>Blocks</b><i class="deepread-stat-paras"></i></div>
+              <em class="deepread-article-title"></em>
+              <small class="deepread-article-meta"></small>
+            </div>
+          </div>
+          <div class="deepread-failure" hidden>
+            <p>There is not enough readable text for a page snapshot.</p>
+            <small>Try selecting a passage to use Explain.</small>
+          </div>
+        </section>
+      </section>
 
-    <section class="deepread-guide-intro">
-      <span>FOLLOW THE SOURCE</span>
-      <p>Ask for help at the passage, or use a concise AI map to understand the page's relationships.</p>
-    </section>
-
-    <section class="deepread-analysis">
-      <section class="deepread-structure" aria-labelledby="deepread-structure-title">
-        <div class="deepread-structure-heading">
-          <span id="deepread-structure-title">AI PAGE MAP</span>
+      <section class="deepread-atlas-map" aria-labelledby="deepread-structure-title">
+        <div class="deepread-atlas-section-heading">
+          <div>
+            <span class="deepread-atlas-kicker">FOLLOW THE SOURCE</span>
+            <h2 id="deepread-structure-title">A map of this page</h2>
+          </div>
           <small class="deepread-structure-count"></small>
         </div>
-        <ol class="deepread-structure-list"></ol>
-        <p class="deepread-structure-error" hidden></p>
-        <p class="deepread-structure-empty" hidden>No useful source blocks were found for a guide.</p>
-        <small class="deepread-structure-note"></small>
+        <p class="deepread-structure-note" aria-live="polite"></p>
+        <ol class="deepread-structure-list" aria-label="Source-linked page map"></ol>
+        <p class="deepread-structure-error" role="status" hidden></p>
+        <p class="deepread-structure-empty" hidden>No useful source passages were found on this page.</p>
       </section>
 
-      <section class="deepread-snapshot" aria-label="Page snapshot">
-        <span>PAGE SNAPSHOT</span>
-        <div class="deepread-snapshot-loading">Reading details…</div>
-        <div class="deepread-result" hidden>
-          <div class="deepread-stats">
-            <div class="deepread-stat-row"><b>Words</b><i class="deepread-stat-words"></i></div>
-            <div class="deepread-stat-row"><b>Reading time</b><i class="deepread-stat-time"></i></div>
-            <div class="deepread-stat-row deepread-stat-paras-row"><b>Blocks</b><i class="deepread-stat-paras"></i></div>
-            <em class="deepread-article-title"></em>
-            <small class="deepread-article-meta"></small>
-          </div>
-        </div>
-        <div class="deepread-failure" hidden>
-          <p>There is not enough readable text for a page snapshot.</p>
-          <small>The selection Explain flow can still work on readable text.</small>
-        </div>
-      </section>
-    </section>
-
-    <footer>Live source layer · AI requests use your local provider key.</footer>
+      <footer class="deepread-atlas-footer"><span>AI MAP / LIVE PAGE SOURCES</span><span>Hover or focus a node to preview its passage · Select to return</span></footer>
+    </main>
   `;
 
   guide.querySelector(".deepread-page-title").textContent = title;
   guide.querySelector(".deepread-page-hostname").textContent = hostname;
   rail.addEventListener("click", () => {
     setGuideExpanded(shell, !shell.classList.contains("deepread-shell--expanded"));
+  });
+  guide.querySelector(".deepread-atlas-scrim").addEventListener("click", () => {
+    setGuideExpanded(shell, false);
   });
   guide.querySelector(".deepread-close").addEventListener("click", () => {
     setGuideExpanded(shell, false);
@@ -769,6 +805,125 @@ function removeExplanationCard() {
   document.getElementById(EXPLANATION_CARD_ID)?.remove();
 }
 
+function removeSourceAnnotation() {
+  if (sourceAnnotationFrame) {
+    cancelAnimationFrame(sourceAnnotationFrame);
+    sourceAnnotationFrame = 0;
+  }
+  document.getElementById(SOURCE_ANNOTATION_ID)?.remove();
+  sourceAnnotationState = null;
+}
+
+function positionSourceAnnotation() {
+  const note = document.getElementById(SOURCE_ANNOTATION_ID);
+  const sourceElement = sourceAnnotationState?.sourceElement;
+  if (!note || !sourceElement?.isConnected) {
+    removeSourceAnnotation();
+    return;
+  }
+
+  const rect = sourceElement.getBoundingClientRect();
+  const isVisible = rect.bottom > 0 && rect.top < window.innerHeight;
+  note.hidden = !isVisible;
+  if (!isVisible) {
+    return;
+  }
+
+  note.classList.remove("is-compact");
+  const width = note.offsetWidth || 248;
+  const height = note.offsetHeight || 130;
+  const gap = 14;
+  const rightSpace = window.innerWidth - rect.right;
+  const leftSpace = rect.left;
+
+  let left;
+  let top;
+  if (rightSpace >= width + gap) {
+    left = rect.right + gap;
+    top = rect.top;
+  } else if (leftSpace >= width + gap) {
+    left = rect.left - width - gap;
+    top = rect.top;
+  } else {
+    note.classList.add("is-compact");
+    left = Math.min(Math.max(8, rect.right - 42), Math.max(8, window.innerWidth - 50));
+    top = rect.top + Math.min(Math.max(0, rect.height / 2 - 20), 24);
+  }
+
+  if (!note.classList.contains("is-compact")) {
+    left = Math.min(Math.max(8, left), Math.max(8, window.innerWidth - width - 8));
+    top = Math.min(Math.max(8, top), Math.max(8, window.innerHeight - height - 8));
+  } else {
+    top = Math.min(Math.max(8, top), Math.max(8, window.innerHeight - 50));
+  }
+  note.style.left = `${left}px`;
+  note.style.top = `${top}px`;
+}
+
+function scheduleSourceAnnotationPosition() {
+  if (!sourceAnnotationState || sourceAnnotationFrame) {
+    return;
+  }
+  sourceAnnotationFrame = requestAnimationFrame(() => {
+    sourceAnnotationFrame = 0;
+    positionSourceAnnotation();
+  });
+}
+
+function showSourceAnnotation({ label, sourceId, sourceText, sourceElement }) {
+  removeSourceAnnotation();
+  const shell = document.getElementById(SHELL_ID);
+  if (!shell || !sourceElement?.isConnected) {
+    return;
+  }
+
+  const note = document.createElement("aside");
+  note.id = SOURCE_ANNOTATION_ID;
+  note.className = "deepread-source-annotation";
+  note.setAttribute("role", "note");
+  note.setAttribute("aria-label", "Atlas source annotation");
+  note.innerHTML = `
+    <button class="deepread-source-note-marker" type="button" aria-expanded="false" aria-label="Open source annotation">↗</button>
+    <div class="deepread-source-note-card">
+      <header><span>FROM THE ATLAS</span><button class="deepread-source-note-close" type="button" aria-label="Dismiss source annotation">×</button></header>
+      <strong class="deepread-source-note-title"></strong>
+      <p class="deepread-source-note-preview"></p>
+      <p class="deepread-source-note-full" hidden></p>
+      <button class="deepread-source-note-more" type="button" hidden>Show longer excerpt</button>
+    </div>
+  `;
+  note.dataset.sourceId = sourceId;
+  note.querySelector(".deepread-source-note-title").textContent = label;
+  note.querySelector(".deepread-source-note-preview").textContent = shortenSourceText(sourceText, 150);
+  note.querySelector(".deepread-source-note-full").textContent = shortenSourceText(sourceText, 1200);
+
+  const marker = note.querySelector(".deepread-source-note-marker");
+  marker.addEventListener("click", () => {
+    const isOpen = note.classList.toggle("is-open");
+    marker.setAttribute("aria-expanded", String(isOpen));
+    marker.setAttribute("aria-label", isOpen ? "Close source annotation" : "Open source annotation");
+  });
+  note.querySelector(".deepread-source-note-close").addEventListener("click", removeSourceAnnotation);
+
+  const preview = note.querySelector(".deepread-source-note-preview");
+  const fullText = note.querySelector(".deepread-source-note-full");
+  const moreButton = note.querySelector(".deepread-source-note-more");
+  const compactText = shortenSourceText(sourceText, 150);
+  if (sourceText.trim().length > compactText.length) {
+    moreButton.hidden = false;
+    moreButton.addEventListener("click", () => {
+      const isExpanded = !fullText.hidden;
+      preview.hidden = !isExpanded;
+      fullText.hidden = isExpanded;
+      moreButton.textContent = isExpanded ? "Show longer excerpt" : "Show less";
+    });
+  }
+
+  shell.append(note);
+  sourceAnnotationState = { sourceElement };
+  positionSourceAnnotation();
+}
+
 function showSelectionAction(text, context, rect) {
   removeExplanationCard();
   if (!selectionAction) {
@@ -910,6 +1065,10 @@ function handleSelectionChange() {
   }
 
   dismissedSelectionText = "";
+  const currentMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
+  if (sourceMapNeedsRefresh || !currentMap?.root?.isConnected) {
+    buildSourceMapSafely();
+  }
   const mappedSource = getMappedSourceForElement(anchor);
   const contextElement = mappedSource?.element || getReadableContextElement(anchor);
   showSelectionAction(text, {
@@ -936,6 +1095,7 @@ function handleDocumentPointerDown(event) {
 }
 
 function scheduleGuideRefresh() {
+  sourceMapNeedsRefresh = true;
   const shell = document.getElementById(SHELL_ID);
   if (!shell?.classList.contains("deepread-shell--expanded")) {
     return;
@@ -960,14 +1120,18 @@ function startDynamicRefresh() {
   }
   dynamicObserver = new MutationObserver((mutations) => {
     const hasExternalChange = mutations.some((mutation) =>
-      !isDeepReadNode(mutation.target) &&
-      [...mutation.addedNodes, ...mutation.removedNodes].some((node) => !isDeepReadNode(node))
+      !isDeepReadNode(mutation.target) && (
+        mutation.type === "characterData" ||
+        [...mutation.addedNodes, ...mutation.removedNodes].some((node) => !isDeepReadNode(node))
+      )
     );
     if (hasExternalChange) {
+      sourceMapNeedsRefresh = true;
       scheduleGuideRefresh();
+      scheduleSourceAnnotationPosition();
     }
   });
-  dynamicObserver.observe(document.documentElement, { childList: true, subtree: true });
+  dynamicObserver.observe(document.documentElement, { childList: true, characterData: true, subtree: true });
   window.addEventListener("popstate", scheduleGuideRefresh);
   window.addEventListener("hashchange", scheduleGuideRefresh);
 }
@@ -976,6 +1140,7 @@ function initializeDeepRead() {
   if (window.location.protocol !== "http:" && window.location.protocol !== "https:") {
     return;
   }
+  buildSourceMapSafely();
   ensureDeepReadShell();
   startDynamicRefresh();
 }
@@ -983,16 +1148,47 @@ function initializeDeepRead() {
 document.addEventListener("selectionchange", handleSelectionChange);
 document.addEventListener("mousedown", handleDocumentPointerDown, true);
 document.addEventListener("keydown", (event) => {
+  const shell = document.getElementById(SHELL_ID);
+  const guide = shell?.querySelector(`#${GUIDE_ID}`);
+  const atlasIsOpen = shell?.classList.contains("deepread-shell--expanded");
+
   if (event.key === "Escape") {
     dismissedSelectionText = window.getSelection()?.toString().trim() || "";
     dismissSelectionAction();
     removeExplanationCard();
+    removeSourceAnnotation();
+    if (atlasIsOpen) {
+      setGuideExpanded(shell, false);
+    }
+    return;
+  }
+
+  if (event.key === "Tab" && atlasIsOpen && guide) {
+    const focusable = Array.from(
+      guide.querySelectorAll('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')
+    ).filter((element) => !element.hidden && element.getClientRects().length > 0);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      guide.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !guide.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 });
 window.addEventListener("scroll", () => {
   dismissSelectionAction();
   removeExplanationCard();
+  scheduleSourceAnnotationPosition();
 }, { passive: true });
+window.addEventListener("resize", scheduleSourceAnnotationPosition, { passive: true });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "TOGGLE_DEEPREAD_GUIDE") {

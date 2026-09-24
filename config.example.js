@@ -2,7 +2,5 @@
 // config.local.js is ignored by Git and is only loaded by the extension service worker.
 
 globalThis.DEEPREAD_LOCAL_CONFIG = {
-  provider: "openai",
-  model: "gpt-5-mini",
-  apiKey: "PASTE_YOUR_OPENAI_API_KEY_HERE"
+  apiKey: "PASTE_YOUR_GEMINI_API_KEY_HERE"
 };
