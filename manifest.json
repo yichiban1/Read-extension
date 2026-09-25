@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "DeepRead — Prototype",
   "version": "0.0.1",
-  "description": "An early browser-extension prototype for testing an in-page reading guide.",
+  "description": "A source-linked reading layer that keeps the original webpage in view.",
   "action": {
     "default_title": "Open DeepRead",
     "default_popup": "popup.html"
@@ -15,7 +15,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["vendor/readability.js", "source-mapping.js", "content.js"],
+      "js": ["source-mapping.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

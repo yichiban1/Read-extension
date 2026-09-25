@@ -1,17 +1,14 @@
 // DeepRead content script.
-// The original webpage remains the reading surface. DeepRead adds a quiet
-// launcher, a spatial source-linked Reading Atlas, and selection-first Explain.
+// The webpage stays readable beneath a small source-linked reading layer.
 
 const GUIDE_ID = "deepread-guide";
 const SHELL_ID = "deepread-shell";
 const RAIL_ID = "deepread-rail-toggle";
 const SOURCE_ANNOTATION_ID = "deepread-source-annotation";
+const XRAY_LABEL_ID = "deepread-xray-label";
 const SELECTION_ACTION_ID = "deepread-selection-action";
 const EXPLANATION_CARD_ID = "deepread-explanation-card";
 const SOURCE_ATTRIBUTE = "data-deepread-source-id";
-const WORDS_PER_MINUTE = 220;
-const MIN_ARTICLE_CHARS = 200;
-const MIN_PAGE_TEXT_CHARS = 60;
 const MAX_FALLBACK_STRUCTURE_ITEMS = 6;
 const MIN_FALLBACK_PASSAGE_CHARS = 36;
 const MAX_PAGE_MAP_SOURCE_BLOCKS = 36;
@@ -27,92 +24,14 @@ let dynamicObserver = null;
 let sourceMapNeedsRefresh = true;
 let sourceAnnotationState = null;
 let sourceAnnotationFrame = 0;
+let peekedSourceElement = null;
+let layoutFrame = 0;
 
 function getPageContext() {
   return {
     title: document.title || "Untitled page",
     hostname: window.location.hostname || "Current page"
   };
-}
-
-function clonePageWithoutDeepRead() {
-  const clone = document.cloneNode(true);
-  clone.querySelector(`#${SHELL_ID}`)?.remove();
-  clone.querySelector(`#${GUIDE_ID}`)?.remove();
-  clone.querySelector(`#${SELECTION_ACTION_ID}`)?.remove();
-  clone.querySelector(`#${EXPLANATION_CARD_ID}`)?.remove();
-  return clone;
-}
-
-function extractArticle() {
-  return new Readability(clonePageWithoutDeepRead()).parse();
-}
-
-function extractWholePageText() {
-  const clone = document.body.cloneNode(true);
-  clone.querySelector(`#${SHELL_ID}`)?.remove();
-  clone.querySelector(`#${GUIDE_ID}`)?.remove();
-  clone.querySelector(`#${SELECTION_ACTION_ID}`)?.remove();
-  clone.querySelector(`#${EXPLANATION_CARD_ID}`)?.remove();
-  clone
-    .querySelectorAll("script, style, noscript, template, svg, nav, header, footer, aside")
-    .forEach((element) => element.remove());
-  return (clone.textContent || "").replace(/\s+/g, " ").trim();
-}
-
-function analysePage() {
-  let parsed = null;
-  try {
-    parsed = extractArticle();
-  } catch (error) {
-    console.warn("DeepRead article extraction failed.", error);
-  }
-
-  const articleText = parsed && parsed.textContent ? parsed.textContent.trim() : "";
-  if (parsed && articleText.length >= MIN_ARTICLE_CHARS) {
-    return { article: parsed, text: articleText, mode: "article" };
-  }
-
-  const pageText = extractWholePageText();
-  if (pageText.length >= MIN_PAGE_TEXT_CHARS) {
-    return {
-      article: {
-        title: document.title,
-        byline: null,
-        siteName: null,
-        content: null,
-        paragraphCount: document.body.querySelectorAll("p").length
-      },
-      text: pageText,
-      mode: "page"
-    };
-  }
-
-  return null;
-}
-
-function countWords(text) {
-  const latinWords = (text.match(/[A-Za-z0-9'’]+/g) || []).length;
-  const cjkChars = (text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g) || []).length;
-  return latinWords + cjkChars;
-}
-
-function estimateReadingMinutes(wordCount) {
-  return Math.max(1, Math.round(wordCount / WORDS_PER_MINUTE));
-}
-
-function countExtractedParagraphs(article) {
-  if (!article.content) {
-    return 0;
-  }
-
-  if (typeof article.content.querySelectorAll === "function") {
-    return article.content.querySelectorAll("p").length;
-  }
-
-  const contentContainer = document.createElement("div");
-  contentContainer.innerHTML = String(article.content);
-  return contentContainer.querySelectorAll("p").length;
 }
 
 function getSourceLevel(source) {
@@ -132,6 +51,7 @@ function getStructureSources(sourceMap) {
     ? sourceMap.sources
     : [];
   const headings = sources.filter(isHeadingSource);
+  const sectionHeadings = headings.filter((source) => getSourceLevel(source) >= 2);
   const contentBlocks = sources.filter((source) =>
     ["p", "li", "blockquote", "pre", "div", "span"].includes(source.tag)
   );
@@ -144,7 +64,13 @@ function getStructureSources(sourceMap) {
   ).slice(0, MAX_FALLBACK_STRUCTURE_ITEMS);
 
   if (headings.length >= 2) {
-    return { mode: "headings", sources: headings };
+    const outline = sectionHeadings.length >= 2 ? sectionHeadings : headings;
+    const sampled = outline.length <= MAX_FALLBACK_STRUCTURE_ITEMS
+      ? outline
+      : Array.from({ length: MAX_FALLBACK_STRUCTURE_ITEMS }, (_, index) =>
+        outline[Math.round(index * (outline.length - 1) / (MAX_FALLBACK_STRUCTURE_ITEMS - 1))]
+      );
+    return { mode: "headings", sources: sampled };
   }
 
   if (headings.length === 1) {
@@ -168,24 +94,32 @@ function shortenSourceText(text, maxLength = 120) {
 }
 
 function setActiveStructureNode(guide, sourceId) {
-  guide.querySelectorAll(".deepread-structure-button.is-active").forEach((button) => {
+  const shell = guide.closest(`#${SHELL_ID}`);
+  shell.querySelectorAll("[data-source-ids].is-active").forEach((button) => {
     button.classList.remove("is-active");
     button.removeAttribute("aria-current");
   });
-  guide.querySelectorAll(".deepread-structure-item.is-active").forEach((item) => {
-    item.classList.remove("is-active");
+  shell.querySelectorAll("[data-source-ids]").forEach((button) => {
+    if (button.dataset.sourceIds.split(",").includes(sourceId)) {
+      button.classList.add("is-active");
+      button.setAttribute("aria-current", "location");
+    }
   });
+}
 
-  const activeButton = Array.from(
-    guide.querySelectorAll(".deepread-structure-button[data-source-ids]")
-  ).find((button) =>
-    button.dataset.sourceIds.split(",").includes(sourceId)
-  );
-  if (activeButton) {
-    activeButton.classList.add("is-active");
-    activeButton.closest(".deepread-structure-item")?.classList.add("is-active");
-    activeButton.setAttribute("aria-current", "location");
+function updateActiveStructureNode(guide) {
+  const sourceMap = guide._deepreadSourceMap;
+  const nodes = guide._deepreadNodes || [];
+  const readingLine = window.innerHeight * 0.52;
+  let activeId = null;
+  for (const node of nodes) {
+    const element = sourceMap?.elementsById?.get(node.sourceIds[0]);
+    if (!element?.isConnected) continue;
+    if (!activeId || element.getBoundingClientRect().top <= readingLine) {
+      activeId = node.sourceIds[0];
+    }
   }
+  if (activeId) setActiveStructureNode(guide, activeId);
 }
 
 function observeStructureSources(guide, sourceMap) {
@@ -196,134 +130,266 @@ function observeStructureSources(guide, sourceMap) {
     return;
   }
 
-  const sourceEntries = [];
-  guide.querySelectorAll(".deepread-structure-button[data-source-ids]").forEach((button) => {
-    button.dataset.sourceIds.split(",").forEach((sourceId) => {
-      const element = sourceMap.elementsById.get(sourceId);
-      if (element) {
-        sourceEntries.push({ button, element, sourceId });
-      }
+  const observer = new IntersectionObserver(() => updateActiveStructureNode(guide), {
+    root: null,
+    rootMargin: "-35% 0px -40% 0px",
+    threshold: [0, 0.2, 0.6]
+  });
+  const observed = new Set();
+  (guide._deepreadNodes || []).forEach((node) => {
+    const element = sourceMap.elementsById.get(node.sourceIds[0]);
+    if (element && !observed.has(element)) {
+      observer.observe(element);
+      observed.add(element);
+    }
+  });
+  guide._deepreadStructureObserver = observer;
+  updateActiveStructureNode(guide);
+}
+
+function positionMapNodes(guide) {
+  const sourceMap = guide._deepreadSourceMap;
+  const nodes = guide._deepreadNodes || [];
+  if (!sourceMap?.root?.isConnected || nodes.length === 0) return;
+
+  const rootRect = sourceMap.root.getBoundingClientRect();
+  const rootTop = rootRect.top + window.scrollY;
+  const rootHeight = Math.max(rootRect.height, sourceMap.root.scrollHeight, 1);
+  const positions = nodes.map((node) => {
+    const element = sourceMap.elementsById.get(node.sourceIds[0]);
+    const top = element?.isConnected
+      ? element.getBoundingClientRect().top + window.scrollY
+      : rootTop;
+    return Math.min(0.92, Math.max(0.08, (top - rootTop) / rootHeight));
+  });
+  for (let index = 1; index < positions.length; index += 1) {
+    positions[index] = Math.max(positions[index], positions[index - 1] + 0.09);
+  }
+  const excess = Math.max(0, positions.at(-1) - 0.92);
+  const shell = guide.closest(`#${SHELL_ID}`);
+  positions.forEach((position, index) => {
+    shell.querySelectorAll(`[data-map-index="${index}"]`).forEach((item) => {
+      item.style.setProperty("--deepread-point-y", `${((position - excess) * 100).toFixed(1)}%`);
     });
   });
 
-  if (sourceEntries.length === 0) {
+  const sourceRects = nodes
+    .map((node) => sourceMap.elementsById.get(node.sourceIds[0]))
+    .filter((element) => element?.isConnected)
+    .map((element) => element.getBoundingClientRect());
+  const rightEdges = sourceRects.map((rect) => rect.right).sort((left, right) => left - right);
+  const leftEdges = sourceRects.map((rect) => rect.left).sort((left, right) => left - right);
+  const middleRight = rightEdges[Math.floor(rightEdges.length / 2)] ?? window.innerWidth;
+  const middleLeft = leftEdges[Math.floor(leftEdges.length / 2)] ?? 0;
+  const atlasWidth = Math.min(268, Math.max(64, window.innerWidth - middleRight - 55));
+  guide.style.width = `${atlasWidth}px`;
+  shell.classList.toggle("deepread-shell--tight", atlasWidth < 166);
+  const leftWidth = Math.min(220, Math.max(0, middleLeft - 48));
+  const useBothMargins = atlasWidth >= 166 && leftWidth >= 166;
+  const guideLeft = guide.getBoundingClientRect().left;
+  const leftStart = Math.max(12, middleLeft - leftWidth - 24);
+  guide.querySelectorAll(".deepread-structure-item").forEach((item, index) => {
+    const onLeft = useBothMargins && index % 2 === 1;
+    item.classList.toggle("is-left-lane", onLeft);
+    if (onLeft) {
+      item.style.left = `${leftStart - guideLeft + (index % 3) * 10}px`;
+      item.style.right = "auto";
+      item.style.width = `${leftWidth}px`;
+    } else {
+      item.style.removeProperty("left");
+      item.style.removeProperty("right");
+      item.style.removeProperty("width");
+    }
+  });
+}
+
+function scheduleMapLayout() {
+  if (layoutFrame) return;
+  layoutFrame = requestAnimationFrame(() => {
+    layoutFrame = 0;
+    const guide = document.getElementById(GUIDE_ID);
+    if (guide) positionMapNodes(guide);
+  });
+}
+
+function clearSourcePeek() {
+  peekedSourceElement?.classList.remove("deepread-source-peek");
+  peekedSourceElement = null;
+  document.getElementById(XRAY_LABEL_ID)?.remove();
+  const guide = document.getElementById(GUIDE_ID);
+  if (guide) guide._deepreadPeek = null;
+}
+
+function positionSourcePeek() {
+  const label = document.getElementById(XRAY_LABEL_ID);
+  const guide = document.getElementById(GUIDE_ID);
+  const peek = guide?._deepreadPeek;
+  if (!label || !peek?.sourceElement?.isConnected) return;
+  const rect = peek.sourceElement.getBoundingClientRect();
+  const anchor = peek.button.getBoundingClientRect();
+  const width = label.offsetWidth || 205;
+  const height = label.offsetHeight || 72;
+  const visible = rect.bottom > 0 && rect.top < window.innerHeight;
+  label.classList.toggle("is-offscreen", !visible);
+  const direction = label.querySelector(".deepread-xray-direction");
+  direction.hidden = visible;
+  direction.textContent = rect.bottom <= 0 ? "SOURCE ABOVE ↑" : "SOURCE BELOW ↓";
+  let left = anchor.left - width - 10;
+  let top = anchor.top - 12;
+  label.classList.remove("is-linked-to-source", "is-left-of-source");
+  const rightFits = window.innerWidth - rect.right >= width + 18;
+  const atlasOverlapsRight = guide.closest(`#${SHELL_ID}`)?.classList.contains("deepread-shell--expanded") &&
+    rect.right + width + 12 > guide.getBoundingClientRect().left - 8;
+  if (visible && rightFits && !atlasOverlapsRight) {
+    left = rect.right + 12;
+    top = rect.top;
+    label.classList.add("is-linked-to-source");
+  } else if (visible && rect.left >= width + 18) {
+    left = rect.left - width - 12;
+    top = rect.top;
+    label.classList.add("is-linked-to-source", "is-left-of-source");
+  } else if (visible && rightFits) {
+    left = rect.right + 12;
+    top = rect.top;
+    label.classList.add("is-linked-to-source");
+  }
+  label.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+  label.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`;
+}
+
+function showSourcePeek(guide, node, index, button) {
+  clearSourcePeek();
+  const source = getSourceById(guide._deepreadSourceMap, node.sourceIds[0]);
+  const element = guide._deepreadSourceMap?.elementsById?.get(node.sourceIds[0]);
+  if (!source || !element?.isConnected) return;
+
+  element.classList.add("deepread-source-peek");
+  peekedSourceElement = element;
+  guide._deepreadPeek = { sourceElement: element, button };
+  const sourceRect = element.getBoundingClientRect();
+  const sourceIsVisible = sourceRect.bottom > 0 && sourceRect.top < window.innerHeight;
+  const labelWidth = window.innerWidth <= 620 ? 132 : 205;
+  const hasLabelMargin = sourceRect.left >= labelWidth + 18 ||
+    window.innerWidth - sourceRect.right >= labelWidth + 18;
+  if (sourceIsVisible &&
+      (button.classList.contains("deepread-structure-button") || !hasLabelMargin)) {
     return;
   }
-
-  const observer = new IntersectionObserver(
-    (entries) => {
-      const visibleEntry = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((left, right) => left.boundingClientRect.top - right.boundingClientRect.top)[0];
-      if (visibleEntry) {
-        const sourceId = visibleEntry.target.getAttribute(SOURCE_ATTRIBUTE);
-        if (sourceId) {
-          setActiveStructureNode(guide, sourceId);
-        }
-      }
-    },
-    { root: null, rootMargin: "-24% 0px -58% 0px", threshold: [0, 0.2, 0.6] }
-  );
-
-  sourceEntries.forEach(({ element }) => observer.observe(element));
-  guide._deepreadStructureObserver = observer;
+  const label = document.createElement("aside");
+  label.id = XRAY_LABEL_ID;
+  label.className = "deepread-xray-label";
+  label.setAttribute("role", "note");
+  label.innerHTML = '<small class="deepread-xray-kind"></small><strong class="deepread-xray-title"></strong><small class="deepread-xray-direction" hidden></small><span class="deepread-xray-excerpt"></span>';
+  label.querySelector(".deepread-xray-kind").textContent =
+    `${String(index + 1).padStart(2, "0")} · ${node.isLiveSource ? "LIVE SOURCE" : node.kind.toUpperCase()}`;
+  label.querySelector(".deepread-xray-title").textContent = node.label;
+  const preview = getSourcePreview(guide._deepreadSourceMap, node.sourceIds[0]);
+  label.querySelector(".deepread-xray-excerpt").textContent =
+    `${preview.provenance.toLowerCase()}: ${shortenSourceText(preview.text, 108)}`;
+  document.getElementById(SHELL_ID)?.append(label);
+  positionSourcePeek();
 }
 
 function getSourceById(sourceMap, sourceId) {
   return (sourceMap?.sources || []).find((source) => source.id === sourceId) || null;
 }
 
-function navigateToAtlasSource(guide, sourceId, label, sourceText) {
+function getSourcePreview(sourceMap, sourceId) {
+  const sources = sourceMap?.sources || [];
+  const index = sources.findIndex((source) => source.id === sourceId);
+  const source = sources[index];
+  if (!source) return { text: "", provenance: "SOURCE PASSAGE" };
+  if (isHeadingSource(source)) {
+    for (const next of sources.slice(index + 1)) {
+      if (isHeadingSource(next)) break;
+      if (next.text.trim().length >= MIN_FALLBACK_PASSAGE_CHARS) {
+        return { text: next.text, provenance: "FOLLOWING ORIGINAL TEXT" };
+      }
+    }
+  }
+  return { text: source.text, provenance: "CITED PASSAGE" };
+}
+
+function navigateToAtlasSource(guide, node, index) {
   const mapping = globalThis.DeepReadSourceMapping;
   const sourceMap = mapping?.getCurrentMap?.();
+  const sourceId = node.sourceIds[0];
+  const source = getSourceById(sourceMap, sourceId);
   const sourceElement = sourceMap?.elementsById?.get(sourceId);
-  if (!sourceElement?.isConnected || !mapping?.scrollToSourceId?.(sourceId)) {
-    showStructureError(guide, "This source is no longer available. Reopen the Atlas to refresh the page map.");
+  if (!source || !sourceElement?.isConnected) {
+    showStructureError(guide, "The linked passage changed. Reopen the map to refresh its sources.");
     return;
   }
 
+  clearSourcePeek();
   const shell = guide.closest(`#${SHELL_ID}`);
-  if (shell) {
-    setGuideExpanded(shell, false);
-  }
-  showSourceAnnotation({ label, sourceId, sourceText, sourceElement });
+  if (shell) setGuideExpanded(shell, false, false);
+  if (!mapping.scrollToSourceId(sourceId)) return;
+  showSourceAnnotation({ label: node.label, sourceId, sourceText: source.text, sourceElement, index });
   scheduleSourceAnnotationPosition();
 }
 
-function createAtlasNode({ label, kind, sourceIds, sourceMap, index, isLiveSource = false }) {
+function createMapPoint(guide, node, index, isSpine) {
   const item = document.createElement("li");
-  const firstSourceId = sourceIds[0];
-  const source = getSourceById(sourceMap, firstSourceId);
-  const sourceText = source?.text || "";
-  const displayLabel = String(label || "Source passage").trim();
-  item.className = "deepread-structure-item deepread-atlas-node";
-  item.dataset.atlasSize = ["feature", "medium", "narrow", "wide", "medium", "narrow"][index % 6];
+  item.className = isSpine ? "deepread-spine-item" : "deepread-structure-item";
+  item.dataset.mapIndex = String(index);
+  item.dataset.lane = String(index % 3);
 
   const button = document.createElement("button");
-  button.className = "deepread-structure-button deepread-atlas-node-button";
+  button.className = isSpine ? "deepread-spine-point" : "deepread-structure-button";
   button.type = "button";
-  button.dataset.sourceIds = sourceIds.join(",");
-  button.setAttribute("aria-label", `Preview and follow ${displayLabel}`);
-
-  const number = document.createElement("span");
-  number.className = "deepread-structure-number deepread-atlas-number";
-  number.textContent = String(index + 1).padStart(2, "0");
-
-  const copy = document.createElement("span");
-  copy.className = "deepread-structure-copy deepread-atlas-copy";
-
-  const meta = document.createElement("small");
-  meta.className = "deepread-structure-meta deepread-atlas-meta";
-  meta.textContent = isLiveSource
-    ? `${kind.toUpperCase()} · LIVE SOURCE`
-    : `${kind.toUpperCase()} · ${sourceIds.length} SOURCE${sourceIds.length === 1 ? "" : "S"}`;
-
-  const title = document.createElement("strong");
-  title.className = "deepread-structure-label deepread-atlas-title";
-  title.textContent = displayLabel;
-
-  const preview = document.createElement("span");
-  preview.className = "deepread-atlas-preview";
-  preview.textContent = sourceText
-    ? shortenSourceText(sourceText, 260)
-    : "The cited passage is no longer available on this page.";
-
-  const arrow = document.createElement("span");
-  arrow.className = "deepread-structure-arrow deepread-atlas-arrow";
-  arrow.setAttribute("aria-hidden", "true");
-  arrow.textContent = "↗";
-
-  copy.append(meta, title, preview);
-  button.append(number, copy, arrow);
-  button.addEventListener("click", () => {
-    if (source) {
-      navigateToAtlasSource(
-        document.getElementById(GUIDE_ID),
-        firstSourceId,
-        displayLabel,
-        source.text
-      );
-    }
+  button.dataset.sourceIds = node.sourceIds.join(",");
+  button.setAttribute("aria-label", `${index + 1}. ${node.label}. Follow source passage`);
+  if (isSpine) {
+    button.textContent = String(index + 1);
+  } else {
+    const number = document.createElement("span");
+    number.className = "deepread-structure-number";
+    number.textContent = String(index + 1).padStart(2, "0");
+    const copy = document.createElement("span");
+    copy.className = "deepread-structure-copy";
+    const kind = document.createElement("small");
+    kind.className = "deepread-structure-meta";
+    kind.textContent = node.isLiveSource ? "LIVE SOURCE" : node.kind.toUpperCase();
+    const title = document.createElement("strong");
+    title.className = "deepread-structure-label";
+    title.textContent = node.label;
+    copy.append(kind, title);
+    button.append(number, copy);
+  }
+  button.addEventListener("mouseenter", () => showSourcePeek(guide, node, index, button));
+  button.addEventListener("focus", () => showSourcePeek(guide, node, index, button));
+  button.addEventListener("mouseleave", () => {
+    if (guide._deepreadPeek?.button === button && document.activeElement !== button) clearSourcePeek();
   });
+  button.addEventListener("blur", () => {
+    if (guide._deepreadPeek?.button === button) clearSourcePeek();
+  });
+  button.addEventListener("click", () => navigateToAtlasSource(guide, node, index));
   item.append(button);
   return item;
 }
 
-function renderStructureItem(list, source, index, mode, sourceMap) {
-  const label = mode === "headings"
-    ? source.text
-    : shortenSourceText(source.text, 110) || `Live source ${String(index + 1).padStart(2, "0")}`;
-  const item = createAtlasNode({
-    label,
-    kind: source.tag || "source",
-    sourceIds: [source.id],
-    sourceMap,
-    index,
-    isLiveSource: true
+function renderMapNodes(guide, nodes, sourceMap) {
+  clearSourcePeek();
+  const order = new Map((sourceMap?.sources || []).map((source, index) => [source.id, index]));
+  const ordered = nodes.slice().sort((left, right) =>
+    (order.get(left.sourceIds[0]) ?? Infinity) - (order.get(right.sourceIds[0]) ?? Infinity)
+  );
+  const spine = guide.closest(`#${SHELL_ID}`)?.querySelector(".deepread-spine-list");
+  const list = guide.querySelector(".deepread-structure-list");
+  guide._deepreadNodes = ordered;
+  guide._deepreadSourceMap = sourceMap;
+  guide.querySelector(".deepread-structure-error").hidden = true;
+  guide.querySelector(".deepread-structure-empty").hidden = ordered.length > 0;
+  spine.replaceChildren();
+  list.replaceChildren();
+  ordered.forEach((node, index) => {
+    spine.append(createMapPoint(guide, node, index, true));
+    list.append(createMapPoint(guide, node, index, false));
   });
-  item.dataset.level = getSourceLevel(source) || "0";
-  list.append(item);
-  return item;
+  observeStructureSources(guide, sourceMap);
+  scheduleMapLayout();
 }
 
 function showStructureError(guide, message) {
@@ -332,48 +398,25 @@ function showStructureError(guide, message) {
   error.hidden = false;
 }
 
-function resetStructureUi(guide) {
-  guide.querySelector(".deepread-structure-error").hidden = true;
-  guide.querySelector(".deepread-structure-empty").hidden = true;
-  guide.querySelector(".deepread-structure-list").replaceChildren();
-  guide.querySelector("#deepread-structure-title").textContent = "AI PAGE MAP";
-}
-
 function renderStructureLoading(guide) {
-  resetStructureUi(guide);
-  guide.querySelector(".deepread-structure-count").textContent = "building…";
   guide.querySelector(".deepread-structure-note").textContent =
-    "Reading live source blocks to find the page's main relationships.";
-  const loading = document.createElement("li");
-  loading.className = "deepread-map-loading";
-  loading.textContent = "Building a concise source-grounded map…";
-  guide.querySelector(".deepread-structure-list").append(loading);
+    "AI map loading · live source points remain usable";
 }
 
-function renderFallbackStructure(guide, sourceMap, label = "LIVE SOURCE OUTLINE") {
-  resetStructureUi(guide);
-  const list = guide.querySelector(".deepread-structure-list");
-  const count = guide.querySelector(".deepread-structure-count");
-  const empty = guide.querySelector(".deepread-structure-empty");
-  const note = guide.querySelector(".deepread-structure-note");
+function renderFallbackStructure(guide, sourceMap) {
   const structure = getStructureSources(sourceMap);
-
-  guide.querySelector("#deepread-structure-title").textContent = label;
-  count.textContent = structure.sources.length
-    ? `${structure.sources.length} live points`
-    : "No mapped structure";
-  note.textContent = "This is a live-source fallback, not an AI-generated interpretation.";
-
-  if (structure.sources.length === 0) {
-    empty.hidden = false;
-    observeStructureSources(guide, sourceMap);
-    return;
-  }
-
-  structure.sources.forEach((source, index) => {
-    renderStructureItem(list, source, index, structure.mode, sourceMap);
-  });
-  observeStructureSources(guide, sourceMap);
+  const nodes = structure.sources.map((source) => ({
+    label: structure.mode === "headings"
+      ? shortenSourceText(source.text, 72)
+      : shortenSourceText(source.text, 72) || "Source passage",
+    kind: source.tag || "source",
+    sourceIds: [source.id],
+    isLiveSource: true
+  }));
+  renderMapNodes(guide, nodes, sourceMap);
+  guide.querySelector(".deepread-structure-count").textContent = `${nodes.length} live points`;
+  guide.querySelector(".deepread-structure-note").textContent =
+    "Live page sources · open the map to request AI structure";
 }
 
 function validatePageMap(pageMap, sourceMap) {
@@ -395,27 +438,16 @@ function validatePageMap(pageMap, sourceMap) {
 }
 
 function renderAiPageMap(guide, nodes, sourceMap) {
-  resetStructureUi(guide);
-  const list = guide.querySelector(".deepread-structure-list");
-  guide.querySelector(".deepread-structure-count").textContent = `${nodes.length} AI nodes`;
+  renderMapNodes(guide, nodes, sourceMap);
+  guide.querySelector(".deepread-structure-count").textContent = `${nodes.length} linked points`;
   guide.querySelector(".deepread-structure-note").textContent =
-    "Previews quote the first cited passage. Choose a node to return to that source.";
-
-  nodes.forEach((node, index) => {
-    list.append(createAtlasNode({
-      label: node.label,
-      kind: node.kind,
-      sourceIds: node.sourceIds,
-      sourceMap,
-      index
-    }));
-  });
-
-  observeStructureSources(guide, sourceMap);
+    "AI Page Map · points follow the order of their cited passages";
 }
 
 function buildSourceMapSafely() {
   try {
+    clearSourcePeek();
+    removeSourceAnnotation();
     const sourceMap = globalThis.DeepReadSourceMapping?.buildSourceMap?.() || null;
     sourceMapNeedsRefresh = !sourceMap;
     return sourceMap;
@@ -459,25 +491,20 @@ function getPageMapPayload(sourceMap) {
 }
 
 async function refreshGuide(guide) {
-  const requestId = (guide._deepreadMapRequestId || 0) + 1;
-  guide._deepreadMapRequestId = requestId;
-  const page = getPageContext();
-  guide.querySelector(".deepread-page-title").textContent = page.title;
-  guide.querySelector(".deepread-page-hostname").textContent = page.hostname;
   const currentMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
   const needsFreshMap = sourceMapNeedsRefresh || !currentMap?.root?.isConnected;
   const sourceMap = needsFreshMap ? buildSourceMapSafely() : currentMap;
-  guide._deepreadSourceMap = sourceMap;
-
-  fillAnalysis(guide);
   if (needsFreshMap) {
     guide._deepreadPageMapCache = null;
+    guide._deepreadPendingMap = null;
+    guide._deepreadMapRequestId = (guide._deepreadMapRequestId || 0) + 1;
+    renderFallbackStructure(guide, sourceMap);
   }
   if (guide._deepreadPageMapCache?.sourceMap === sourceMap) {
     return;
   }
-
-  renderStructureLoading(guide);
+  if (guide._deepreadPendingMap?.sourceMap === sourceMap) return;
+  if (!guide._deepreadNodes) renderFallbackStructure(guide, sourceMap);
 
   const sourceCount = sourceMap?.sources?.length || 0;
   const totalText = (sourceMap?.sources || []).reduce(
@@ -485,11 +512,15 @@ async function refreshGuide(guide) {
     0
   );
   if (sourceCount < 2 || totalText < 240) {
-    renderFallbackStructure(guide, sourceMap, "LIVE SOURCE OUTLINE");
     showStructureError(guide, "This page does not contain enough coherent text for an AI Page Map.");
     return;
   }
 
+  renderStructureLoading(guide);
+  const requestId = (guide._deepreadMapRequestId || 0) + 1;
+  guide._deepreadMapRequestId = requestId;
+  const pending = { sourceMap };
+  guide._deepreadPendingMap = pending;
   try {
     const response = await sendDeepReadMessage({
       type: "DEEPREAD_GENERATE_PAGE_MAP",
@@ -500,15 +531,15 @@ async function refreshGuide(guide) {
     }
 
     if (!response?.ok) {
-      renderFallbackStructure(guide, sourceMap, "LIVE SOURCE OUTLINE");
-      showStructureError(guide, response?.message || "The AI Page Map is unavailable. No AI content was shown.");
+      guide.querySelector(".deepread-structure-note").textContent = "Live page sources";
+      showStructureError(guide, response?.message || "AI Page Map unavailable. Live sources remain usable.");
       return;
     }
 
     const nodes = validatePageMap(response.pageMap, sourceMap);
     if (nodes.length === 0) {
-      renderFallbackStructure(guide, sourceMap, "LIVE SOURCE OUTLINE");
-      showStructureError(guide, "The AI returned no valid source-linked map. No invented nodes were shown.");
+      guide.querySelector(".deepread-structure-note").textContent = "Live page sources";
+      showStructureError(guide, "AI returned no valid source links. Live sources remain usable.");
       return;
     }
 
@@ -516,13 +547,15 @@ async function refreshGuide(guide) {
     renderAiPageMap(guide, nodes, sourceMap);
   } catch (error) {
     if (guide.isConnected && guide._deepreadMapRequestId === requestId) {
-      renderFallbackStructure(guide, sourceMap, "LIVE SOURCE OUTLINE");
-      showStructureError(guide, "The AI Page Map could not be reached. The live source outline is still available.");
+      guide.querySelector(".deepread-structure-note").textContent = "Live page sources";
+      showStructureError(guide, "AI Page Map could not be reached. Live sources remain usable.");
     }
+  } finally {
+    if (guide._deepreadPendingMap === pending) guide._deepreadPendingMap = null;
   }
 }
 
-function setGuideExpanded(shell, expanded) {
+function setGuideExpanded(shell, expanded, restoreFocus = true) {
   const rail = shell.querySelector(`#${RAIL_ID}`);
   const guide = shell.querySelector(`#${GUIDE_ID}`);
   shell.classList.toggle("deepread-shell--expanded", expanded);
@@ -535,12 +568,9 @@ function setGuideExpanded(shell, expanded) {
   if (expanded) {
     removeSourceAnnotation();
     void refreshGuide(guide);
-    requestAnimationFrame(() => guide.querySelector(".deepread-close")?.focus());
   } else {
-    guide._deepreadStructureObserver?.disconnect();
-    dismissSelectionAction();
-    removeExplanationCard();
-    rail.focus();
+    clearSourcePeek();
+    if (restoreFocus && guide.contains(document.activeElement)) rail.focus();
   }
 }
 
@@ -549,11 +579,13 @@ function createDeepReadShell() {
     return document.getElementById(SHELL_ID);
   }
 
-  const { title, hostname } = getPageContext();
   const shell = document.createElement("div");
   shell.id = SHELL_ID;
   shell.className = "deepread-shell";
 
+  const spine = document.createElement("nav");
+  spine.className = "deepread-spine";
+  spine.setAttribute("aria-label", "DeepRead reading spine");
   const rail = document.createElement("button");
   rail.id = RAIL_ID;
   rail.className = "deepread-rail-toggle";
@@ -561,121 +593,44 @@ function createDeepReadShell() {
   rail.setAttribute("aria-expanded", "false");
   rail.setAttribute("aria-controls", GUIDE_ID);
   rail.setAttribute("aria-label", "Open Reading Atlas");
-  rail.innerHTML = '<span class="deepread-rail-mark" aria-hidden="true">D</span><span class="deepread-rail-label">Atlas</span><span class="deepread-rail-arrow" aria-hidden="true">↗</span>';
+  rail.innerHTML = '<span class="deepread-rail-mark" aria-hidden="true">D</span><span class="deepread-rail-arrow" aria-hidden="true">+</span>';
+  const spineList = document.createElement("ol");
+  spineList.className = "deepread-spine-list";
+  spineList.setAttribute("aria-label", "Source positions");
+  spine.append(rail, spineList);
 
   const guide = document.createElement("aside");
   guide.id = GUIDE_ID;
-  guide.setAttribute("role", "dialog");
-  guide.setAttribute("aria-modal", "true");
-  guide.setAttribute("aria-label", "DeepRead Reading Atlas");
+  guide.setAttribute("role", "group");
+  guide.setAttribute("aria-label", "Reading Atlas source points");
   guide.setAttribute("aria-hidden", "true");
-  guide.tabIndex = -1;
   guide.inert = true;
   guide.innerHTML = `
-    <button class="deepread-atlas-scrim" type="button" aria-label="Close Reading Atlas"></button>
-    <main class="deepread-atlas-panel">
-      <header class="deepread-atlas-topbar">
-        <div class="deepread-atlas-brand"><span class="deepread-atlas-brand-mark">D</span><span>DEEPREAD / READING ATLAS</span></div>
-        <button class="deepread-close" type="button" aria-label="Return to the original page"><span>Return to page</span><b aria-hidden="true">×</b></button>
-      </header>
-
-      <section class="deepread-atlas-masthead">
-        <div class="deepread-atlas-page-context">
-          <span class="deepread-atlas-kicker">ORIGINAL PAGE / <span class="deepread-page-hostname"></span></span>
-          <h1 class="deepread-page-title"></h1>
-          <p>Explore the page through passages that lead back to the original text.</p>
-        </div>
-        <section class="deepread-snapshot" aria-label="Reading estimate">
-          <div class="deepread-snapshot-loading">Reading details…</div>
-          <div class="deepread-result" hidden>
-            <div class="deepread-stats">
-              <span>PAGE AT A GLANCE</span>
-              <div class="deepread-stat-row"><b>Words</b><i class="deepread-stat-words"></i></div>
-              <div class="deepread-stat-row"><b>Reading time</b><i class="deepread-stat-time"></i></div>
-              <div class="deepread-stat-row deepread-stat-paras-row"><b>Blocks</b><i class="deepread-stat-paras"></i></div>
-              <em class="deepread-article-title"></em>
-              <small class="deepread-article-meta"></small>
-            </div>
-          </div>
-          <div class="deepread-failure" hidden>
-            <p>There is not enough readable text for a page snapshot.</p>
-            <small>Try selecting a passage to use Explain.</small>
-          </div>
-        </section>
-      </section>
-
-      <section class="deepread-atlas-map" aria-labelledby="deepread-structure-title">
-        <div class="deepread-atlas-section-heading">
-          <div>
-            <span class="deepread-atlas-kicker">FOLLOW THE SOURCE</span>
-            <h2 id="deepread-structure-title">A map of this page</h2>
-          </div>
-          <small class="deepread-structure-count"></small>
-        </div>
-        <p class="deepread-structure-note" aria-live="polite"></p>
-        <ol class="deepread-structure-list" aria-label="Source-linked page map"></ol>
-        <p class="deepread-structure-error" role="status" hidden></p>
-        <p class="deepread-structure-empty" hidden>No useful source passages were found on this page.</p>
-      </section>
-
-      <footer class="deepread-atlas-footer"><span>AI MAP / LIVE PAGE SOURCES</span><span>Hover or focus a node to preview its passage · Select to return</span></footer>
-    </main>
+    <div class="deepread-atlas-heading">
+      <span id="deepread-structure-title">READING ATLAS</span>
+      <button class="deepread-close" type="button" aria-label="Collapse Reading Atlas">×</button>
+    </div>
+    <small class="deepread-structure-count"></small>
+    <ol class="deepread-structure-list" aria-label="Source-linked page map"></ol>
+    <p class="deepread-structure-note" aria-live="polite"></p>
+    <p class="deepread-structure-error" role="status" hidden></p>
+    <p class="deepread-structure-empty" hidden>No readable source points on this page.</p>
   `;
 
-  guide.querySelector(".deepread-page-title").textContent = title;
-  guide.querySelector(".deepread-page-hostname").textContent = hostname;
   rail.addEventListener("click", () => {
     setGuideExpanded(shell, !shell.classList.contains("deepread-shell--expanded"));
-  });
-  guide.querySelector(".deepread-atlas-scrim").addEventListener("click", () => {
-    setGuideExpanded(shell, false);
   });
   guide.querySelector(".deepread-close").addEventListener("click", () => {
     setGuideExpanded(shell, false);
   });
 
-  shell.append(rail, guide);
+  shell.append(spine, guide);
   document.documentElement.appendChild(shell);
   return shell;
 }
 
 function ensureDeepReadShell() {
   return createDeepReadShell();
-}
-
-function fillAnalysis(guide) {
-  const loading = guide.querySelector(".deepread-snapshot-loading");
-  if (loading) {
-    loading.remove();
-  }
-
-  const result = guide.querySelector(".deepread-result");
-  const failure = guide.querySelector(".deepread-failure");
-  result.hidden = true;
-  failure.hidden = true;
-
-  const analysis = analysePage();
-  if (!analysis) {
-    failure.hidden = false;
-    return;
-  }
-
-  const { article, text, mode } = analysis;
-  result.hidden = false;
-  const wordCount = countWords(text);
-  result.querySelector(".deepread-stat-words").textContent = wordCount.toLocaleString();
-  result.querySelector(".deepread-stat-time").textContent = `${estimateReadingMinutes(wordCount)} min`;
-  result.querySelector(".deepread-stat-paras").textContent = mode === "article"
-    ? String(countExtractedParagraphs(article))
-    : String(article.paragraphCount);
-  result.querySelector(".deepread-article-title").textContent = article.title || "";
-  result.querySelector(".deepread-article-meta").textContent = [
-    mode === "article" ? "Article extraction" : "Full-page capture",
-    article.byline ? `By ${article.byline}` : null,
-    article.siteName || null
-  ]
-    .filter(Boolean)
-    .join(" · ");
 }
 
 function toggleGuide() {
@@ -830,34 +785,30 @@ function positionSourceAnnotation() {
   }
 
   note.classList.remove("is-compact");
-  const width = note.offsetWidth || 248;
-  const height = note.offsetHeight || 130;
-  const gap = 14;
+  note.classList.remove("is-left");
+  note.classList.toggle("is-above", rect.top > window.innerHeight - 150);
+  note.style.maxWidth = "210px";
+  const width = note.offsetWidth || 176;
+  const gap = 10;
   const rightSpace = window.innerWidth - rect.right;
   const leftSpace = rect.left;
 
   let left;
-  let top;
-  if (rightSpace >= width + gap) {
+  if (rightSpace >= 150 + gap) {
     left = rect.right + gap;
-    top = rect.top;
-  } else if (leftSpace >= width + gap) {
+    note.style.maxWidth = `${Math.min(210, rightSpace - gap - 8)}px`;
+  } else if (leftSpace >= 150 + gap) {
     left = rect.left - width - gap;
-    top = rect.top;
+    note.style.maxWidth = `${Math.min(210, leftSpace - gap - 8)}px`;
+    note.classList.add("is-left");
   } else {
     note.classList.add("is-compact");
-    left = Math.min(Math.max(8, rect.right - 42), Math.max(8, window.innerWidth - 50));
-    top = rect.top + Math.min(Math.max(0, rect.height / 2 - 20), 24);
+    note.style.maxWidth = "30px";
+    left = Math.min(Math.max(6, rect.right - 18), Math.max(6, window.innerWidth - 36));
   }
 
-  if (!note.classList.contains("is-compact")) {
-    left = Math.min(Math.max(8, left), Math.max(8, window.innerWidth - width - 8));
-    top = Math.min(Math.max(8, top), Math.max(8, window.innerHeight - height - 8));
-  } else {
-    top = Math.min(Math.max(8, top), Math.max(8, window.innerHeight - 50));
-  }
-  note.style.left = `${left}px`;
-  note.style.top = `${top}px`;
+  note.style.left = `${Math.max(6, Math.min(left, window.innerWidth - (note.offsetWidth || 30) - 6))}px`;
+  note.style.top = `${Math.max(8, Math.min(rect.top + 3, window.innerHeight - 42))}px`;
 }
 
 function scheduleSourceAnnotationPosition() {
@@ -870,7 +821,7 @@ function scheduleSourceAnnotationPosition() {
   });
 }
 
-function showSourceAnnotation({ label, sourceId, sourceText, sourceElement }) {
+function showSourceAnnotation({ label, sourceId, sourceText, sourceElement, index }) {
   removeSourceAnnotation();
   const shell = document.getElementById(SHELL_ID);
   if (!shell || !sourceElement?.isConnected) {
@@ -881,43 +832,34 @@ function showSourceAnnotation({ label, sourceId, sourceText, sourceElement }) {
   note.id = SOURCE_ANNOTATION_ID;
   note.className = "deepread-source-annotation";
   note.setAttribute("role", "note");
-  note.setAttribute("aria-label", "Atlas source annotation");
+  note.setAttribute("aria-label", "Source margin trace");
   note.innerHTML = `
-    <button class="deepread-source-note-marker" type="button" aria-expanded="false" aria-label="Open source annotation">↗</button>
-    <div class="deepread-source-note-card">
-      <header><span>FROM THE ATLAS</span><button class="deepread-source-note-close" type="button" aria-label="Dismiss source annotation">×</button></header>
-      <strong class="deepread-source-note-title"></strong>
-      <p class="deepread-source-note-preview"></p>
-      <p class="deepread-source-note-full" hidden></p>
-      <button class="deepread-source-note-more" type="button" hidden>Show longer excerpt</button>
+    <button class="deepread-trace-toggle" type="button" aria-expanded="false" aria-label="Expand source trace">
+      <span class="deepread-trace-number"></span><span class="deepread-trace-title"></span>
+    </button>
+    <div class="deepread-trace-detail">
+      <div class="deepread-trace-heading"><span>LIVE SOURCE</span><button class="deepread-trace-close" type="button" aria-label="Dismiss source trace">×</button></div>
+      <p class="deepread-trace-preview"></p>
+      <p class="deepread-trace-full" hidden></p>
     </div>
   `;
   note.dataset.sourceId = sourceId;
-  note.querySelector(".deepread-source-note-title").textContent = label;
-  note.querySelector(".deepread-source-note-preview").textContent = shortenSourceText(sourceText, 150);
-  note.querySelector(".deepread-source-note-full").textContent = shortenSourceText(sourceText, 1200);
+  const preview = getSourcePreview(globalThis.DeepReadSourceMapping?.getCurrentMap?.(), sourceId);
+  note.querySelector(".deepread-trace-number").textContent = String(index + 1).padStart(2, "0");
+  note.querySelector(".deepread-trace-title").textContent = label;
+  note.querySelector(".deepread-trace-heading span").textContent = preview.provenance;
+  note.querySelector(".deepread-trace-preview").textContent = shortenSourceText(preview.text || sourceText, 116);
+  note.querySelector(".deepread-trace-full").textContent = shortenSourceText(preview.text || sourceText, 280);
 
-  const marker = note.querySelector(".deepread-source-note-marker");
-  marker.addEventListener("click", () => {
+  const toggle = note.querySelector(".deepread-trace-toggle");
+  toggle.addEventListener("click", () => {
     const isOpen = note.classList.toggle("is-open");
-    marker.setAttribute("aria-expanded", String(isOpen));
-    marker.setAttribute("aria-label", isOpen ? "Close source annotation" : "Open source annotation");
+    toggle.setAttribute("aria-expanded", String(isOpen));
+    toggle.setAttribute("aria-label", isOpen ? "Collapse source trace" : "Expand source trace");
+    note.querySelector(".deepread-trace-preview").hidden = isOpen;
+    note.querySelector(".deepread-trace-full").hidden = !isOpen;
   });
-  note.querySelector(".deepread-source-note-close").addEventListener("click", removeSourceAnnotation);
-
-  const preview = note.querySelector(".deepread-source-note-preview");
-  const fullText = note.querySelector(".deepread-source-note-full");
-  const moreButton = note.querySelector(".deepread-source-note-more");
-  const compactText = shortenSourceText(sourceText, 150);
-  if (sourceText.trim().length > compactText.length) {
-    moreButton.hidden = false;
-    moreButton.addEventListener("click", () => {
-      const isExpanded = !fullText.hidden;
-      preview.hidden = !isExpanded;
-      fullText.hidden = isExpanded;
-      moreButton.textContent = isExpanded ? "Show longer excerpt" : "Show less";
-    });
-  }
+  note.querySelector(".deepread-trace-close").addEventListener("click", removeSourceAnnotation);
 
   shell.append(note);
   sourceAnnotationState = { sourceElement };
@@ -1079,6 +1021,10 @@ function handleSelectionChange() {
 }
 
 function handleDocumentPointerDown(event) {
+  const shell = document.getElementById(SHELL_ID);
+  if (shell?.classList.contains("deepread-shell--expanded") && !event.target.closest?.(`#${SHELL_ID}`)) {
+    setGuideExpanded(shell, false, false);
+  }
   if (
     event.target.closest?.(`#${SELECTION_ACTION_ID}`) ||
     event.target.closest?.(`#${EXPLANATION_CARD_ID}`)
@@ -1096,16 +1042,20 @@ function handleDocumentPointerDown(event) {
 
 function scheduleGuideRefresh() {
   sourceMapNeedsRefresh = true;
-  const shell = document.getElementById(SHELL_ID);
-  if (!shell?.classList.contains("deepread-shell--expanded")) {
-    return;
-  }
   clearTimeout(dynamicRefreshTimer);
   dynamicRefreshTimer = setTimeout(() => {
     const guide = document.getElementById(GUIDE_ID);
-    if (guide && shell.classList.contains("deepread-shell--expanded")) {
+    const shell = document.getElementById(SHELL_ID);
+    if (!guide || !shell) return;
+    if (shell.classList.contains("deepread-shell--expanded")) {
       void refreshGuide(guide);
+      return;
     }
+    const sourceMap = buildSourceMapSafely();
+    guide._deepreadPageMapCache = null;
+    guide._deepreadPendingMap = null;
+    guide._deepreadMapRequestId = (guide._deepreadMapRequestId || 0) + 1;
+    renderFallbackStructure(guide, sourceMap);
   }, DYNAMIC_REFRESH_DELAY_MS);
 }
 
@@ -1119,14 +1069,20 @@ function startDynamicRefresh() {
     return;
   }
   dynamicObserver = new MutationObserver((mutations) => {
+    const mappedRoot = globalThis.DeepReadSourceMapping?.getCurrentMap?.()?.root;
     const hasExternalChange = mutations.some((mutation) =>
       !isDeepReadNode(mutation.target) && (
-        mutation.type === "characterData" ||
-        [...mutation.addedNodes, ...mutation.removedNodes].some((node) => !isDeepReadNode(node))
+        !mappedRoot?.isConnected ||
+        (mappedRoot.contains(mutation.target) && (
+          mutation.type === "characterData" ||
+          [...mutation.addedNodes, ...mutation.removedNodes].some((node) => !isDeepReadNode(node))
+        )) ||
+        [...mutation.addedNodes, ...mutation.removedNodes].some((node) =>
+          node === mappedRoot || node.contains?.(mappedRoot)
+        )
       )
     );
     if (hasExternalChange) {
-      sourceMapNeedsRefresh = true;
       scheduleGuideRefresh();
       scheduleSourceAnnotationPosition();
     }
@@ -1140,8 +1096,9 @@ function initializeDeepRead() {
   if (window.location.protocol !== "http:" && window.location.protocol !== "https:") {
     return;
   }
-  buildSourceMapSafely();
-  ensureDeepReadShell();
+  const sourceMap = buildSourceMapSafely();
+  const shell = ensureDeepReadShell();
+  renderFallbackStructure(shell.querySelector(`#${GUIDE_ID}`), sourceMap);
   startDynamicRefresh();
 }
 
@@ -1149,7 +1106,6 @@ document.addEventListener("selectionchange", handleSelectionChange);
 document.addEventListener("mousedown", handleDocumentPointerDown, true);
 document.addEventListener("keydown", (event) => {
   const shell = document.getElementById(SHELL_ID);
-  const guide = shell?.querySelector(`#${GUIDE_ID}`);
   const atlasIsOpen = shell?.classList.contains("deepread-shell--expanded");
 
   if (event.key === "Escape") {
@@ -1162,33 +1118,20 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-
-  if (event.key === "Tab" && atlasIsOpen && guide) {
-    const focusable = Array.from(
-      guide.querySelectorAll('button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')
-    ).filter((element) => !element.hidden && element.getClientRects().length > 0);
-    if (focusable.length === 0) {
-      event.preventDefault();
-      guide.focus();
-      return;
-    }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && (document.activeElement === first || !guide.contains(document.activeElement))) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
 });
 window.addEventListener("scroll", () => {
   dismissSelectionAction();
   removeExplanationCard();
   scheduleSourceAnnotationPosition();
+  positionSourcePeek();
+  const guide = document.getElementById(GUIDE_ID);
+  if (guide) updateActiveStructureNode(guide);
 }, { passive: true });
-window.addEventListener("resize", scheduleSourceAnnotationPosition, { passive: true });
+window.addEventListener("resize", () => {
+  scheduleMapLayout();
+  scheduleSourceAnnotationPosition();
+  positionSourcePeek();
+}, { passive: true });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "TOGGLE_DEEPREAD_GUIDE") {

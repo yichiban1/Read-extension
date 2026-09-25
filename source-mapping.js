@@ -1,6 +1,4 @@
-// DeepRead source mapping foundation.
-// This maps useful elements in the live page. Readability's cloned document
-// remains an extraction aid, but it is never used as a navigation target.
+// DeepRead source mapping foundation. Source targets are live page elements.
 
 (() => {
   const SOURCE_ATTRIBUTE = "data-deepread-source-id";
@@ -21,7 +19,7 @@
   const MIN_GENERIC_DIRECT_TEXT_CHARS = 24;
   const MAX_LINK_DENSITY = 0.55;
   const HIGHLIGHT_CLASS = "deepread-source-highlight";
-  const HIGHLIGHT_DURATION = 1600;
+  const HIGHLIGHT_DURATION = 6000;
 
   const EXCLUDED_TAGS = new Set([
     "script",

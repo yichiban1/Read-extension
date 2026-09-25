@@ -1,17 +1,18 @@
 # DeepRead
 
-DeepRead is a Chrome Manifest V3 prototype for source-linked reading support. The original webpage remains the primary reading surface. A quiet launcher opens an experimental spatial Reading Atlas; selected-text Explain remains available on the page.
+DeepRead is a Chrome Manifest V3 prototype for source-linked reading support. The original webpage remains the reading surface. A small Reading Spine and temporary margin labels connect AI structure back to its live passages; selected-text Explain remains available on the page.
 
 ## Current prototype
 
-- A DeepRead rail appears automatically on ordinary `http` and `https` pages and stays collapsed until opened.
-- Reading Atlas arranges existing AI Page Map nodes in an editorial layout over a subdued view of the original page. Hovering or keyboard-focusing a node previews an excerpt from its first cited live source.
-- Selecting a node closes the Atlas, follows its Source ID, applies the existing Source Spotlight, and shows a small annotation with the node title and real source excerpt. The note can expand or be dismissed and hides while its source is out of view.
+- A thin Reading Spine appears near the right edge on ordinary `http` and `https` pages. It first shows up to six real source positions from the page, so reading can begin without an AI request.
+- Hovering or keyboard-focusing a point lightly outlines its live source and shows a short contextual label. If the source is outside the viewport, the label indicates whether it is above or below and uses real nearby page text.
+- Opening Reading Atlas requests the existing AI Page Map once for the current Source Map. Source-linked points and short labels appear around the article in the available margins, arranged by article order and source position. The webpage stays visible and usable. Narrow layouts keep small points; focus or hover still spots the source, with a short direction label when it is offscreen.
+- Selecting a point collapses Atlas, follows its Source ID, applies Source Spotlight, and leaves a small margin trace. The trace reveals a short excerpt on hover or focus and can expand or be dismissed. It hides when its source leaves the viewport.
 - Source Mapping is initialized when the content script starts and refreshed before Explain after observed page changes. Explain requests include the available Source ID as reference metadata without requiring the Atlas to be opened first.
 - Selecting readable text shows an `Explain` action, including text outside the mapped reading region. The response appears beside the selection and contains plain-language meaning, context, and an optional analogy.
 - The service worker sends structured-output requests to Gemini using `gemini-3.5-flash-lite`. Missing keys, API failures, invalid responses, and rate limits show an error instead of fabricated content.
 - The Atlas reuses the existing source collection, AI Page Map, ID validation, and live-source fallback. ID validation ensures the target exists; it does not prove that a generated label is semantically supported by the cited passage.
-- Mozilla Readability remains a local extraction aid for secondary reading statistics, not a navigation target.
+- The current interaction uses live Source Mapping directly. The old reading-statistics panel and its Readability script are no longer loaded.
 
 This prototype does not include Critical Reading, translation, follow-up chat, multiple providers, accounts, a production backend, PDF/OCR support, or a settings dashboard.
 
@@ -33,11 +34,12 @@ After changing the file, reload the unpacked extension in `chrome://extensions`.
 
 1. Open `chrome://extensions` and enable **Developer mode**.
 2. Choose **Load unpacked** and select this repository folder, the one containing `manifest.json`.
-3. Open an article, documentation page, forum, or another ordinary webpage. Confirm the collapsed DeepRead rail appears.
-4. Before opening the Atlas, select a paragraph and choose **Explain**. Confirm the request succeeds and includes the available Source ID.
-5. Open Reading Atlas and wait for the AI Page Map. Hover or keyboard-focus a node to preview its cited passage.
-6. Select a node. The Atlas should close, the page should scroll to and highlight its source, and a source annotation should appear beside it. Expand and dismiss the annotation, then continue scrolling.
-7. If testing failure states, temporarily remove or invalidate the local key, reload the extension, and confirm an explicit error or live-source fallback appears instead of fabricated content. Restore the key after testing.
+3. Open an ordinary article or documentation page. Confirm the page remains unobscured and a thin Reading Spine with source points appears at the right edge.
+4. Before opening Atlas, focus or hover a spine point. Confirm the associated original passage is outlined when visible and a small source label appears. Scroll the page and check that the active point changes.
+5. Open Atlas from the small **D** launcher. The initial live-source points remain usable while the AI Page Map loads. Confirm AI labels later replace them without a scrim, panel, or card grid.
+6. Focus or hover an Atlas point, then select it. Atlas should recede; the page should scroll to and highlight its real source, leaving a small margin trace. Hover, expand, dismiss, and scroll past the trace.
+7. Select text on the original webpage without opening Atlas and choose **Explain**. Confirm the explanation appears near the selection and includes the available Source ID in its request.
+8. Repeat with a narrow Chrome window and a second ordinary HTML page. If testing failure states, temporarily invalidate the local key, reload the extension, and confirm a clear error with live-source points instead of invented AI nodes. Restore the key afterward.
 
 The repository root in this workspace is `Read extension` inside the outer `Deepread-extension` folder. Load the inner directory containing `manifest.json`, not the parent workspace folder.
 
@@ -48,8 +50,7 @@ The repository root in this workspace is `Read extension` inside the outer `Deep
 | `manifest.json` | Manifest V3 configuration and Gemini host permission. |
 | `background.js` | Single Gemini request path, structured-output schemas, source ID validation, timeout, and error handling. |
 | `config.example.js` | Safe template for the ignored local API-key file. |
-| `popup.html`, `popup.css`, `popup.js` | Small toolbar popup that opens Reading Atlas. |
-| `content.js`, `content.css` | Automatic rail, Reading Atlas, Explain flow, source navigation, and annotation. |
+| `popup.html`, `popup.css`, `popup.js` | Small toolbar popup that expands the source map. |
+| `content.js`, `content.css` | Reading Spine, X-Ray peek, light Atlas, Explain, source navigation, and margin trace. |
 | `source-mapping.js` | Live reading-region selection, Source IDs, and scroll/highlight navigation. |
-| `vendor/readability.js` | Browser copy of Mozilla Readability for local extraction only. |
 | `PROJECT_STATE.md` | Experiment summary, implementation status, limitations, and next iteration. |
