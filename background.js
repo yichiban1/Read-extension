@@ -317,10 +317,12 @@ function createSmartReadingRequest(payload) {
   return {
     instructions: [
       "You are DeepRead identifying a few passages where a reader may need help understanding the supplied page.",
-      "Return zero to five genuinely useful comprehension aids. Zero is correct if nothing needs extra explanation; never fill a quota.",
+      "Return zero to five genuinely useful comprehension aids; prefer fewer strong aids to five weak ones. Zero is correct if nothing needs extra explanation.",
+      "Choose passages where a typical reader benefits from technical or domain knowledge, historical background, or clarification of an abstract idea. Skip obvious words, simple paraphrases, and repeated versions of the same idea.",
       "Use only concept, term, background, or context. Do not critique evidence, bias, assumptions, causality, or counterarguments.",
       "Each item must cite exactly one supplied Source ID for the passage that prompted it. Prefer the passage itself over a nearby heading.",
-      "Use a specific short label and a concise hint explaining what context would help here. Do not invent facts beyond the supplied text."
+      "Use a specific short label. The hint should give the useful clarification itself in one concise sentence, not merely say that clarification is needed.",
+      "You may use stable general background knowledge to clarify a term, but do not invent page-specific facts or suggest the page says something it does not."
     ].join(" "),
     input: [
       `Page title: ${limitText(payload?.page?.title, 240) || "Unknown"}`,

@@ -2,42 +2,41 @@
 
 Updated: 2026-09-25
 
-## Design direction
+## Product direction
 
-The original webpage remains the reading surface. Reading Spine, Spatial Atlas, Smart Reading markers, contextual Explain, and the Living Reading Trail are small states of one source-linked layer. The fullscreen editorial Atlas in `40c4e42` was rejected after Chrome testing; this iteration preserves the later lightweight Spine and Atlas design.
+The original webpage remains the reading surface. Reading Spine, Spatial Atlas, Smart Lens, Source X-Ray, Select Text → Explain, and the session-local Reading Trail form one source-linked assistance layer. The fullscreen editorial Atlas in `40c4e42` was rejected after Chrome testing; this iteration keeps the later lightweight design.
 
 ## Current implementation
 
-- Source Mapping initializes when the content script starts and produces `deepread-source-<number>` IDs for live page passages. The Reading Spine shows up to six page-source positions before any AI request, follows the reading position, and sits near the detected article edge when the margin permits.
-- Atlas uses the existing Gemini Page Map request. Its small source-linked nodes appear around the original article without a scrim, card grid, or replacement reader. Focus or hover gives an X-Ray source response; selecting a point collapses Atlas, scrolls to the cited passage, applies Source Spotlight, and leaves a trace.
-- The small ✦ action runs one on-demand Smart Reading request for the current Source Map. The content script samples substantial passages across the article. The single Gemini service worker asks for zero to five comprehension aids and validates that each result is `concept`, `term`, `background`, or `context`, has text, and cites an ID sent in that request. Invalid IDs are discarded. Valid findings appear as small markers beside their real sources; focus or hover spotlights the passage and reveals the hint. Selecting a marker follows the source and opens a Smart trace. A zero-item response is accepted.
-- Living Reading Trail is an in-memory array of at most five traces from Atlas, Smart Reading, and Explain. Traces can coexist, follow visible sources, expand to show their already available content, and be dismissed individually. Adding a sixth removes the oldest. They are never stored across reloads; a Source Map rebuild clears them to avoid stale IDs.
-- Select Text → Explain works without opening Atlas. It sends the selected text, nearby context, and an available Source ID through the existing Gemini path. Plain meaning appears first, with article context second and analogy only if provided. The explanation opens beside the mapped passage when there is room. Dismissal or continued reading collapses a successful mapped explanation into an Explained trace. Reopening that trace reads its cached response without a new request.
-- The implementation still uses one Gemini model and one local configuration file. There is no Critical Reading, chat, persistence, settings, or new framework.
+- Source Mapping builds live `deepread-source-<number>` IDs. The Reading Spine initially shows up to six real page-source positions and tracks the current reading area without an AI request. Spatial Atlas uses the existing Page Map, keeps the article visible, and navigates to cited passages with Source Spotlight.
+- Smart Lens is one on-demand Gemini comprehension analysis for the current Source Map. Its control now distinguishes inactive, analysing, active with a visible finding count, and active with zero findings. A compact overview lists each finding and semantic type immediately after analysis and can be reopened from the same control. Its items, distinct ✦ points on the Reading Spine, and contextual margin markers all navigate to the same cited Source ID. Spine points remain visible for findings outside the current viewport. Focus or hover uses Source X-Ray to identify the source and type.
+- The Smart Lens result is cached in content-script memory for the current Source Map. Closing and reopening its overview or turning the Lens off and back on does not request Gemini again. A zero-result response creates no markers and presents an explicit empty state. The Gemini instructions now prefer useful technical, domain, historical, or abstract-concept context over trivial vocabulary and ask for a direct, concise hint. Results are still limited to five, the four comprehension categories, and IDs sent with the request.
+- The Reading Trail can hold at most five session-local traces from Atlas, Smart Lens, and Explain. Explain still works without opening Atlas. A mapped explanation can collapse to an Explained trace whose cached content reopens without another Gemini request.
+- The small DeepRead surfaces now use a shared opaque light surface with high-contrast text. Small labels and hints use system fonts. The white text shadow on Atlas labels is removed; larger editorial titles retain the serif style. This is a readability change, not a theme or replacement reader.
 
-## Verification
+## Verification performed
 
-- `node --check` on `background.js` and `content.js`, manifest JSON parsing, and `git diff --check` passed for this iteration.
-- Real Gemini GenerateContent calls with a synthetic technical article returned three Smart Reading items linked to sent Source IDs. A simpler synthetic article returned zero items. This verifies this request path and zero-result handling with the current local key; it does not verify result quality on arbitrary webpages.
-- In a local ordinary-article fixture rendered in Codex's in-app browser at a desktop viewport, the page stayed readable; the Spine and Atlas remained lightweight; three mocked Smart findings appeared at mapped passages; keyboard focus applied source X-Ray; clicking a finding spotlighted its source and opened a trace; Atlas navigation left another trace; a selected-text Explain response appeared beside its mapped passage; dismissing it created an Explained trace; Smart and Explained traces coexisted. A fixture-side request counter stayed at one after reopening the Explain trace. Adding six Atlas visits left exactly five traces. Atlas opening hid existing trace detail and preserved the article view.
-- The fixture mocks extension messaging and Gemini results. The modified extension has **not** yet been reloaded and manually checked in Chrome as an unpacked extension. Actual content-script injection, service-worker lifecycle, style collisions on other sites, narrow layouts, and real-page Gemini latency remain pending.
+- Static: `node --check` on `content.js` and `background.js` passed. Manifest parsing and `git diff --check` were also run.
+- Real Gemini: a synthetic technical article returned three Smart Reading results with IDs in the supplied set using the current local configuration. This checks the request path after the prompt adjustment, not result quality on a particular real article.
+- Local browser fixture, with mocked extension messages: on a long light article, the Smart Lens showed an analysing state, then a persistent count of three, a clickable compact overview, and three global Spine positions. Choosing the second overview item navigated to its original passage, applied Source Spotlight, and opened a Smart trace. Keyboard focus on a Spine point activated the corresponding X-Ray response.
+- On a near-black version of the same fixture, the Spine, Atlas labels, Smart overview, and source marker remained visually crisp without a white text glow. Reopening the overview and turning the Lens off and back on kept the fixture's Smart request counter at one. A zero-result fixture displayed an empty state and no Smart Spine markers. Existing Atlas, Explain, and Reading Trail flows were exercised in the previous iteration's local fixture.
+- This browser fixture renders the content scripts on an ordinary HTML page but mocks the extension messaging. The modified extension has **not yet been reloaded and manually checked in Chrome**. Chrome content-script injection, service-worker lifecycle, narrow pages, and interactions with real site styles remain acceptance work.
 
-## Known limitations and risks
+## Known limitations
 
-- A valid Source ID proves only that a passage exists, not that a Gemini label or hint is semantically supported by it. Page Map has the same limitation. No additional grounding architecture was added.
-- Smart Reading may return zero aids or may suggest weak aids. Its analysis uses at most 36 sampled, truncated source blocks, so a long page may contain useful passages it never sees.
-- Traces are associated with mapped source elements. Explain selections outside the mapped reading region still receive an explanation but cannot leave a source-linked Explained trace.
-- On narrow or unusually styled pages, there may be insufficient side space for full labels or the contextual Explain surface. Compact markers and fallback positioning need Chrome validation on several ordinary pages.
-- Each fresh Smart Reading analysis is an API request that sends sampled page text to Gemini. It starts only from the explicit ✦ action and is cached for the current Source Map. The local key is in ignored `config.local.js`; do not put it in reports or logs.
+- A valid Source ID proves a cited passage exists; it does not prove the AI label or hint is semantically supported by that passage. Page Map has the same limitation. No new grounding architecture was added.
+- Smart Lens samples at most 36 substantial truncated source blocks, so a long article may have relevant passages outside the sample. Gemini may return zero results or weak suggestions; the UI does not create filler.
+- The compact overview may overlap article text when a page has very little side space. Narrow-window placement needs direct Chrome review. Dark readability was visually checked only in the local fixture, not across real sites with conflicting styles.
+- Each fresh Smart Lens analysis sends sampled page text to Gemini after the user presses the control. The key is in ignored `config.local.js`; do not include it in reports, screenshots, or logs.
 
-## Next UI/UX iteration
+## Recommended next UI/UX iteration
 
-Reload the unpacked extension in Chrome and observe a full reading pass on at least two ordinary HTML articles, including a narrow window. Pay attention to whether users notice the small ✦ action, whether Smart hints genuinely help comprehension, and whether several traces remain legible without competing with the article. Refine placement or wording based on those observations. Keep the Page Map semantic-support limitation visible; defer Critical Reading.
+Reload the unpacked extension in Chrome and perform a full reading pass on two ordinary long articles, including a dark-background page and a narrow window. Check whether users immediately understand the count, finding names, and article positions; whether Smart points and Atlas remain distinct; and whether overview placement stays out of the reading path. Refine placement and wording from that observation before adding another capability. Keep Critical Reading deferred.
 
-For a failure, capture the page URL, viewport width, Source ID, relevant sanitized page/service-worker console error, and screenshot. Redact credentials and private article text before sharing.
+For failures, record the page URL, viewport width, Source ID, sanitized page/service-worker console error, and a screenshot. Redact credentials and private page text before sharing.
 
 ## Git state
 
-- Branch: `main`; base commit before this iteration: `494367e`.
+- Branch: `main`; base commit before this iteration: `b94691f`.
 - This iteration is uncommitted. No reset, cleanup, or commit was performed.
 - `config.local.js` remains ignored and local-only.
