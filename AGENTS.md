@@ -31,32 +31,37 @@ Visible interaction quality is more important than backend sophistication.
 
 ## Current product scope
 
-DeepRead currently has three core features:
+DeepRead currently demonstrates four source-linked reading behaviours within one lightweight layer:
 
-1. Page Guide + Structure
+1. Page Guide / Reading Atlas + Structure
    - Help the user understand what the page is about and how it is organised.
    - Structure items should connect back to real source passages.
    - Clicking a structure item should navigate to and visibly identify its source.
 
-2. Select Text -> Explain
+2. Smart Lens
+   - Offer a few useful comprehension aids for difficult concepts, terms, or background.
+   - Keep each aid linked to its original passage through the Spine and margin trace.
+   - Zero findings is valid; do not fill the page with trivial suggestions.
+
+3. Critical Lens
+   - Optionally identify genuinely noteworthy passages that may deserve closer inspection.
+   - Examples include evidence, assumptions, causal claims, uncertainty,
+     missing counterpoints, or value judgements.
+   - Frame findings as questions for the reader, not verdicts or automatic fact checks.
+   - Cite supplied Source IDs. It is acceptable to return no findings.
+   - Do not manufacture criticism just to populate the interface.
+
+4. Select Text -> Explain
    - The user selects difficult text on the original webpage.
    - DeepRead explains it in simpler language and may use an analogy.
    - The explanation should stay visually connected to the selected source.
    - This is explanation, not translation.
 
-3. Critical Reading
-   - Optionally identify genuinely noteworthy passages that may deserve closer inspection.
-   - Examples include evidence gaps, unsupported assumptions, causal leaps,
-     uncertainty, missing counterarguments, or value judgements.
-   - Findings must connect back to real source passages.
-   - It is acceptable to return no findings.
-   - Do not manufacture criticism just to populate the interface.
-
-Do not add a fourth primary feature unless the user explicitly asks for it.
+Do not add more primary behaviours unless the user explicitly asks for them.
 
 ## Source-linked interaction
 
-The same source-mapping system should support all three features.
+The same source-mapping system should support all four behaviours.
 
 Useful webpage content should be mapped to stable DeepRead source IDs.
 
@@ -89,7 +94,7 @@ The original prototype is the starting point, not an interface that must
 be preserved unchanged.
 
 You may simplify, replace, or restructure existing implementation when it
-clearly improves the three core experiences.
+clearly improves the current source-linked reading experiences.
 
 ## Technical direction
 
@@ -123,7 +128,7 @@ Do not preserve old code merely because it already exists.
 Before substantial implementation:
 - inspect the current code and understand the existing interaction
 - identify what is useful and what can be replaced
-- keep changes aligned with the three core features
+- keep changes aligned with the four current reading behaviours
 
 After implementation:
 - test the actual extension behaviour
