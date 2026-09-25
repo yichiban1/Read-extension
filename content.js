@@ -4,7 +4,7 @@
 const GUIDE_ID = "deepread-guide";
 const SHELL_ID = "deepread-shell";
 const RAIL_ID = "deepread-rail-toggle";
-const SOURCE_ANNOTATION_ID = "deepread-source-annotation";
+const SMART_ACTION_ID = "deepread-smart-action";
 const XRAY_LABEL_ID = "deepread-xray-label";
 const SELECTION_ACTION_ID = "deepread-selection-action";
 const EXPLANATION_CARD_ID = "deepread-explanation-card";
@@ -14,6 +14,7 @@ const MIN_FALLBACK_PASSAGE_CHARS = 36;
 const MAX_PAGE_MAP_SOURCE_BLOCKS = 36;
 const MAX_PAGE_MAP_SOURCE_CHARS = 700;
 const DYNAMIC_REFRESH_DELAY_MS = 900;
+const MAX_READING_TRAIL = 5;
 
 let selectionAction = null;
 let selectionContext = null;
@@ -22,8 +23,16 @@ let selectionRequestToken = 0;
 let dynamicRefreshTimer = null;
 let dynamicObserver = null;
 let sourceMapNeedsRefresh = true;
-let sourceAnnotationState = null;
-let sourceAnnotationFrame = 0;
+let readingTrail = [];
+let readingTrailSequence = 0;
+let marginLayoutFrame = 0;
+let smartReadingItems = [];
+let smartReadingMap = null;
+let smartReadingLoaded = false;
+let smartReadingVisible = false;
+let smartReadingRequestToken = 0;
+let smartStatusTimer = null;
+let activeExplanation = null;
 let peekedSourceElement = null;
 let layoutFrame = 0;
 
@@ -181,6 +190,11 @@ function positionMapNodes(guide) {
   const leftEdges = sourceRects.map((rect) => rect.left).sort((left, right) => left - right);
   const middleRight = rightEdges[Math.floor(rightEdges.length / 2)] ?? window.innerWidth;
   const middleLeft = leftEdges[Math.floor(leftEdges.length / 2)] ?? 0;
+  const rightMargin = window.innerWidth - middleRight;
+  shell.style.setProperty(
+    "--deepread-spine-right",
+    `${rightMargin >= 105 ? Math.max(5, rightMargin - 58) : 5}px`
+  );
   const atlasWidth = Math.min(268, Math.max(64, window.innerWidth - middleRight - 55));
   guide.style.width = `${atlasWidth}px`;
   shell.classList.toggle("deepread-shell--tight", atlasWidth < 166);
@@ -272,7 +286,9 @@ function showSourcePeek(guide, node, index, button) {
   const hasLabelMargin = sourceRect.left >= labelWidth + 18 ||
     window.innerWidth - sourceRect.right >= labelWidth + 18;
   if (sourceIsVisible &&
-      (button.classList.contains("deepread-structure-button") || !hasLabelMargin)) {
+      (button.classList.contains("deepread-structure-button") ||
+       button.classList.contains("deepread-smart-marker-button") ||
+       button.classList.contains("deepread-trace-toggle") || !hasLabelMargin)) {
     return;
   }
   const label = document.createElement("aside");
@@ -325,8 +341,14 @@ function navigateToAtlasSource(guide, node, index) {
   const shell = guide.closest(`#${SHELL_ID}`);
   if (shell) setGuideExpanded(shell, false, false);
   if (!mapping.scrollToSourceId(sourceId)) return;
-  showSourceAnnotation({ label: node.label, sourceId, sourceText: source.text, sourceElement, index });
-  scheduleSourceAnnotationPosition();
+  addReadingTrace({
+    kind: "atlas",
+    label: node.label,
+    sourceId,
+    sourceElement,
+    marker: String(index + 1).padStart(2, "0"),
+    sourceText: source.text
+  });
 }
 
 function createMapPoint(guide, node, index, isSpine) {
@@ -447,7 +469,10 @@ function renderAiPageMap(guide, nodes, sourceMap) {
 function buildSourceMapSafely() {
   try {
     clearSourcePeek();
-    removeSourceAnnotation();
+    document.getElementById(EXPLANATION_CARD_ID)?.remove();
+    activeExplanation = null;
+    clearReadingTrail();
+    clearSmartReading();
     const sourceMap = globalThis.DeepReadSourceMapping?.buildSourceMap?.() || null;
     sourceMapNeedsRefresh = !sourceMap;
     return sourceMap;
@@ -488,6 +513,196 @@ function getPageMapPayload(sourceMap) {
         text: source.text.slice(0, MAX_PAGE_MAP_SOURCE_CHARS)
       }))
   };
+}
+
+function getSmartReadingPayload(sourceMap) {
+  const sources = (sourceMap?.sources || []).filter((source) =>
+    source.text?.trim().length >= MIN_FALLBACK_PASSAGE_CHARS
+  );
+  const sampled = sources.length <= MAX_PAGE_MAP_SOURCE_BLOCKS
+    ? sources
+    : Array.from({ length: MAX_PAGE_MAP_SOURCE_BLOCKS }, (_, index) =>
+      sources[Math.round(index * (sources.length - 1) / (MAX_PAGE_MAP_SOURCE_BLOCKS - 1))]
+    );
+  return {
+    page: getPageContext(),
+    sources: sampled.map((source) => ({
+      id: source.id,
+      tag: source.tag,
+      text: source.text.slice(0, MAX_PAGE_MAP_SOURCE_CHARS)
+    }))
+  };
+}
+
+function setSmartStatus(message, transient = false) {
+  const status = document.querySelector(".deepread-smart-status");
+  if (!status) return;
+  clearTimeout(smartStatusTimer);
+  status.textContent = message;
+  status.hidden = !message;
+  if (message && transient) {
+    smartStatusTimer = setTimeout(() => { status.hidden = true; }, 4800);
+  }
+}
+
+function updateSmartAction() {
+  const button = document.getElementById(SMART_ACTION_ID);
+  if (!button) return;
+  button.classList.toggle("is-active", smartReadingVisible && smartReadingItems.length > 0);
+  button.setAttribute("aria-pressed", String(smartReadingVisible && smartReadingItems.length > 0));
+  button.setAttribute("aria-label", smartReadingVisible && smartReadingItems.length > 0
+    ? "Hide Smart Reading aids"
+    : smartReadingLoaded && smartReadingItems.length > 0
+      ? "Show Smart Reading aids"
+      : "Find reading aids near original passages");
+}
+
+function clearSmartReading() {
+  smartReadingRequestToken += 1;
+  smartReadingItems.forEach((item) => item.element?.remove());
+  smartReadingItems = [];
+  smartReadingMap = null;
+  smartReadingLoaded = false;
+  smartReadingVisible = false;
+  const button = document.getElementById(SMART_ACTION_ID);
+  if (button) {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+  }
+  setSmartStatus("");
+  updateSmartAction();
+}
+
+function renderSmartReadingMarkers() {
+  const shell = document.getElementById(SHELL_ID);
+  const guide = document.getElementById(GUIDE_ID);
+  if (!shell || !guide) return;
+  smartReadingItems.forEach((item, index) => {
+    item.element?.remove();
+    item.element = null;
+    if (!smartReadingVisible || item.opened || !item.sourceElement?.isConnected) return;
+
+    const marker = document.createElement("aside");
+    marker.className = "deepread-smart-marker deepread-margin-item";
+    marker.dataset.sourceId = item.sourceId;
+    marker.dataset.kind = item.type;
+    marker.innerHTML = `
+      <button class="deepread-smart-marker-button" type="button">
+        <span class="deepread-smart-marker-symbol" aria-hidden="true">✦</span>
+        <span class="deepread-smart-marker-copy"><small></small><strong></strong></span>
+      </button>
+      <span class="deepread-smart-marker-hint"></span>
+    `;
+    const button = marker.querySelector("button");
+    button.setAttribute("aria-label", `${item.type}: ${item.label}. ${item.hint}. Open reading aid`);
+    marker.querySelector("small").textContent = item.type.toUpperCase();
+    marker.querySelector("strong").textContent = item.label;
+    marker.querySelector(".deepread-smart-marker-hint").textContent = item.hint;
+    const peek = () => showSourcePeek(guide, {
+      label: item.label,
+      kind: item.type,
+      sourceIds: [item.sourceId]
+    }, index, button);
+    button.addEventListener("mouseenter", peek);
+    button.addEventListener("focus", peek);
+    button.addEventListener("mouseleave", () => {
+      if (guide._deepreadPeek?.button === button && document.activeElement !== button) clearSourcePeek();
+    });
+    button.addEventListener("blur", () => {
+      if (guide._deepreadPeek?.button === button) clearSourcePeek();
+    });
+    button.addEventListener("click", () => {
+      if (!item.sourceElement.isConnected) return;
+      clearSourcePeek();
+      item.opened = true;
+      marker.remove();
+      item.element = null;
+      globalThis.DeepReadSourceMapping?.scrollToSourceId?.(item.sourceId);
+      addReadingTrace({
+        kind: "smart",
+        label: item.label,
+        type: item.type,
+        hint: item.hint,
+        sourceId: item.sourceId,
+        sourceElement: item.sourceElement,
+        marker: String(index + 1).padStart(2, "0"),
+        open: true
+      });
+    });
+    shell.append(marker);
+    item.element = marker;
+  });
+  scheduleMarginLayout();
+}
+
+async function requestSmartReading() {
+  const guide = document.getElementById(GUIDE_ID);
+  const button = document.getElementById(SMART_ACTION_ID);
+  if (!guide || !button || button.disabled) return;
+  const currentMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
+  const needsFreshMap = sourceMapNeedsRefresh || !currentMap?.root?.isConnected;
+  const sourceMap = needsFreshMap ? buildSourceMapSafely() : currentMap;
+  if (needsFreshMap) renderFallbackStructure(guide, sourceMap);
+  if (!sourceMap) {
+    setSmartStatus("No readable page source was found.");
+    return;
+  }
+  if (smartReadingLoaded && smartReadingMap === sourceMap) {
+    smartReadingVisible = !smartReadingVisible;
+    renderSmartReadingMarkers();
+    updateSmartAction();
+    setSmartStatus(smartReadingItems.length
+      ? `${smartReadingVisible ? "Showing" : "Hiding"} ${smartReadingItems.length} reading aids.`
+      : "No extra reading aids were found on this page.", true);
+    return;
+  }
+
+  const requestId = ++smartReadingRequestToken;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  setSmartStatus("Finding useful reading aids…");
+  try {
+    const response = await sendDeepReadMessage({
+      type: "DEEPREAD_SMART_READING",
+      payload: getSmartReadingPayload(sourceMap)
+    });
+    if (requestId !== smartReadingRequestToken || !button.isConnected) return;
+    if (!response?.ok) {
+      setSmartStatus(response?.message || "Smart Reading is unavailable.");
+      return;
+    }
+    const validIds = new Set((sourceMap.sources || []).map((source) => source.id));
+    const items = Array.isArray(response.smartReading?.items) ? response.smartReading.items : [];
+    smartReadingItems = items
+      .filter((item) => validIds.has(item.sourceId) &&
+        typeof item.label === "string" && typeof item.hint === "string" &&
+        ["concept", "term", "background", "context"].includes(item.type))
+      .slice(0, 5)
+      .map((item) => ({
+        ...item,
+        sourceElement: sourceMap.elementsById.get(item.sourceId),
+        opened: false,
+        element: null
+      }));
+    smartReadingMap = sourceMap;
+    smartReadingLoaded = true;
+    smartReadingVisible = smartReadingItems.length > 0;
+    renderSmartReadingMarkers();
+    updateSmartAction();
+    setSmartStatus(smartReadingItems.length
+      ? `${smartReadingItems.length} source-linked reading aids.`
+      : "No extra reading aids were found on this page.", true);
+  } catch (error) {
+    if (requestId === smartReadingRequestToken) {
+      setSmartStatus("Smart Reading could not reach Gemini. Try again.");
+      console.warn("DeepRead Smart Reading request failed.", error);
+    }
+  } finally {
+    if (requestId === smartReadingRequestToken) {
+      button.disabled = false;
+      button.classList.remove("is-loading");
+    }
+  }
 }
 
 async function refreshGuide(guide) {
@@ -566,7 +781,6 @@ function setGuideExpanded(shell, expanded, restoreFocus = true) {
   guide.inert = !expanded;
 
   if (expanded) {
-    removeSourceAnnotation();
     void refreshGuide(guide);
   } else {
     clearSourcePeek();
@@ -594,10 +808,23 @@ function createDeepReadShell() {
   rail.setAttribute("aria-controls", GUIDE_ID);
   rail.setAttribute("aria-label", "Open Reading Atlas");
   rail.innerHTML = '<span class="deepread-rail-mark" aria-hidden="true">D</span><span class="deepread-rail-arrow" aria-hidden="true">+</span>';
+  const smartAction = document.createElement("button");
+  smartAction.id = SMART_ACTION_ID;
+  smartAction.className = "deepread-smart-action";
+  smartAction.type = "button";
+  smartAction.title = "Find reading aids";
+  smartAction.setAttribute("aria-label", "Find reading aids near original passages");
+  smartAction.setAttribute("aria-pressed", "false");
+  smartAction.innerHTML = '<span aria-hidden="true">✦</span>';
+  const smartStatus = document.createElement("span");
+  smartStatus.className = "deepread-smart-status";
+  smartStatus.setAttribute("role", "status");
+  smartStatus.setAttribute("aria-live", "polite");
+  smartStatus.hidden = true;
   const spineList = document.createElement("ol");
   spineList.className = "deepread-spine-list";
   spineList.setAttribute("aria-label", "Source positions");
-  spine.append(rail, spineList);
+  spine.append(rail, smartAction, smartStatus, spineList);
 
   const guide = document.createElement("aside");
   guide.id = GUIDE_ID;
@@ -620,6 +847,7 @@ function createDeepReadShell() {
   rail.addEventListener("click", () => {
     setGuideExpanded(shell, !shell.classList.contains("deepread-shell--expanded"));
   });
+  smartAction.addEventListener("click", () => void requestSmartReading());
   guide.querySelector(".deepread-close").addEventListener("click", () => {
     setGuideExpanded(shell, false);
   });
@@ -730,6 +958,35 @@ function positionFloatingElement(element, rect) {
   });
 }
 
+function positionExplanationCard(card, context) {
+  const sourceElement = context.sourceId &&
+    globalThis.DeepReadSourceMapping?.getCurrentMap?.()?.elementsById?.get(context.sourceId);
+  const sourceRect = sourceElement?.isConnected ? sourceElement.getBoundingClientRect() : null;
+  if (!sourceRect) {
+    positionFloatingElement(card, context.rect);
+    return;
+  }
+  card.style.visibility = "hidden";
+  requestAnimationFrame(() => {
+    if (!card.isConnected) return;
+    const width = card.offsetWidth;
+    const height = card.offsetHeight;
+    const rightSpace = window.innerWidth - sourceRect.right;
+    const leftSpace = sourceRect.left;
+    if (rightSpace < width + 12 && leftSpace < width + 12) {
+      positionFloatingElement(card, context.rect);
+      return;
+    }
+    const left = rightSpace >= width + 12
+      ? sourceRect.right + 8
+      : sourceRect.left - width - 8;
+    const top = Math.max(8, Math.min(context.rect.top, window.innerHeight - height - 8));
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+    card.style.visibility = "visible";
+  });
+}
+
 function createSelectionAction() {
   const action = document.createElement("div");
   action.id = SELECTION_ACTION_ID;
@@ -758,112 +1015,201 @@ function dismissSelectionAction() {
 
 function removeExplanationCard() {
   document.getElementById(EXPLANATION_CARD_ID)?.remove();
-}
-
-function removeSourceAnnotation() {
-  if (sourceAnnotationFrame) {
-    cancelAnimationFrame(sourceAnnotationFrame);
-    sourceAnnotationFrame = 0;
-  }
-  document.getElementById(SOURCE_ANNOTATION_ID)?.remove();
-  sourceAnnotationState = null;
-}
-
-function positionSourceAnnotation() {
-  const note = document.getElementById(SOURCE_ANNOTATION_ID);
-  const sourceElement = sourceAnnotationState?.sourceElement;
-  if (!note || !sourceElement?.isConnected) {
-    removeSourceAnnotation();
-    return;
-  }
-
-  const rect = sourceElement.getBoundingClientRect();
-  const isVisible = rect.bottom > 0 && rect.top < window.innerHeight;
-  note.hidden = !isVisible;
-  if (!isVisible) {
-    return;
-  }
-
-  note.classList.remove("is-compact");
-  note.classList.remove("is-left");
-  note.classList.toggle("is-above", rect.top > window.innerHeight - 150);
-  note.style.maxWidth = "210px";
-  const width = note.offsetWidth || 176;
-  const gap = 10;
-  const rightSpace = window.innerWidth - rect.right;
-  const leftSpace = rect.left;
-
-  let left;
-  if (rightSpace >= 150 + gap) {
-    left = rect.right + gap;
-    note.style.maxWidth = `${Math.min(210, rightSpace - gap - 8)}px`;
-  } else if (leftSpace >= 150 + gap) {
-    left = rect.left - width - gap;
-    note.style.maxWidth = `${Math.min(210, leftSpace - gap - 8)}px`;
-    note.classList.add("is-left");
-  } else {
-    note.classList.add("is-compact");
-    note.style.maxWidth = "30px";
-    left = Math.min(Math.max(6, rect.right - 18), Math.max(6, window.innerWidth - 36));
-  }
-
-  note.style.left = `${Math.max(6, Math.min(left, window.innerWidth - (note.offsetWidth || 30) - 6))}px`;
-  note.style.top = `${Math.max(8, Math.min(rect.top + 3, window.innerHeight - 42))}px`;
-}
-
-function scheduleSourceAnnotationPosition() {
-  if (!sourceAnnotationState || sourceAnnotationFrame) {
-    return;
-  }
-  sourceAnnotationFrame = requestAnimationFrame(() => {
-    sourceAnnotationFrame = 0;
-    positionSourceAnnotation();
+  const saved = activeExplanation;
+  activeExplanation = null;
+  if (!saved?.context?.sourceId) return;
+  const sourceElement = globalThis.DeepReadSourceMapping?.getCurrentMap?.()
+    ?.elementsById?.get(saved.context.sourceId);
+  if (!sourceElement?.isConnected) return;
+  addReadingTrace({
+    kind: "explained",
+    label: shortenSourceText(saved.context.text, 34),
+    sourceId: saved.context.sourceId,
+    sourceElement,
+    marker: "E",
+    explanation: saved.explanation,
+    selectedText: saved.context.text
   });
 }
 
-function showSourceAnnotation({ label, sourceId, sourceText, sourceElement, index }) {
-  removeSourceAnnotation();
-  const shell = document.getElementById(SHELL_ID);
-  if (!shell || !sourceElement?.isConnected) {
-    return;
+function clearReadingTrail() {
+  if (marginLayoutFrame) {
+    cancelAnimationFrame(marginLayoutFrame);
+    marginLayoutFrame = 0;
   }
+  readingTrail.forEach((trace) => trace.element?.remove());
+  readingTrail = [];
+}
 
+function removeReadingTrace(id) {
+  const index = readingTrail.findIndex((trace) => trace.id === id);
+  if (index < 0) return;
+  readingTrail[index].element?.remove();
+  readingTrail.splice(index, 1);
+  scheduleMarginLayout();
+}
+
+function positionMarginItems() {
+  const entries = [
+    ...readingTrail.map((trace) => ({ element: trace.element, sourceElement: trace.sourceElement })),
+    ...smartReadingItems.filter((item) => item.element).map((item) => ({
+      element: item.element,
+      sourceElement: item.sourceElement
+    }))
+  ];
+  const groups = { left: [], right: [], compact: [] };
+  entries.forEach(({ element, sourceElement }) => {
+    if (!element || !sourceElement?.isConnected) return;
+    const rect = sourceElement.getBoundingClientRect();
+    const visible = rect.bottom > 0 && rect.top < window.innerHeight;
+    element.hidden = !visible;
+    if (!visible) return;
+
+    element.classList.remove("is-left", "is-compact");
+    element.style.maxWidth = "210px";
+    const gap = 10;
+    const rightSpace = window.innerWidth - rect.right;
+    const leftSpace = rect.left;
+    let side = "right";
+    let left;
+    if (rightSpace >= 160) {
+      element.style.maxWidth = `${Math.min(210, rightSpace - gap - 8)}px`;
+      left = rect.right + gap;
+    } else if (leftSpace >= 160) {
+      side = "left";
+      element.classList.add("is-left");
+      element.style.maxWidth = `${Math.min(210, leftSpace - gap - 8)}px`;
+      left = rect.left - element.offsetWidth - gap;
+    } else {
+      side = "compact";
+      element.classList.add("is-compact");
+      element.style.maxWidth = "30px";
+      left = Math.min(Math.max(6, rect.right - 18), window.innerWidth - 36);
+    }
+    element.style.setProperty("--deepread-margin-width", side === "compact" ? "210px" : element.style.maxWidth);
+    element.style.left = `${Math.max(6, Math.min(left, window.innerWidth - element.offsetWidth - 6))}px`;
+    groups[side].push({
+      element,
+      desiredTop: Math.max(8, Math.min(rect.top + 3, window.innerHeight - 42)),
+      height: element.offsetHeight || 26
+    });
+  });
+
+  Object.values(groups).forEach((group) => {
+    group.sort((left, right) => left.desiredTop - right.desiredTop);
+    let cursor = 8;
+    group.forEach((entry) => {
+      entry.top = Math.max(entry.desiredTop, cursor);
+      cursor = entry.top + entry.height + 5;
+    });
+    const overflow = Math.max(0, cursor - 5 - (window.innerHeight - 8));
+    group.forEach((entry) => {
+      const top = Math.max(8, entry.top - overflow);
+      entry.element.style.top = `${top}px`;
+      entry.element.classList.toggle("is-above", top > window.innerHeight - 150);
+    });
+  });
+}
+
+function scheduleMarginLayout() {
+  if (marginLayoutFrame || (!readingTrail.length && !smartReadingItems.length)) return;
+  marginLayoutFrame = requestAnimationFrame(() => {
+    marginLayoutFrame = 0;
+    positionMarginItems();
+  });
+}
+
+function addReadingTrace({ kind, label, sourceId, sourceElement, marker, sourceText, type, hint, explanation, selectedText, open = false }) {
+  const shell = document.getElementById(SHELL_ID);
+  const sourceMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
+  if (!shell || !sourceElement?.isConnected || sourceMap?.elementsById?.get(sourceId) !== sourceElement) return;
+  const existing = readingTrail.find((trace) =>
+    trace.kind === kind && trace.sourceId === sourceId &&
+    (kind !== "explained" || trace.selectedText === selectedText)
+  );
+  if (existing) removeReadingTrace(existing.id);
+  while (readingTrail.length >= MAX_READING_TRAIL) removeReadingTrace(readingTrail[0].id);
+
+  const trace = {
+    id: ++readingTrailSequence,
+    kind, label, sourceId, sourceElement, marker: marker || "E",
+    sourceText, type, hint, explanation, selectedText,
+    element: null
+  };
   const note = document.createElement("aside");
-  note.id = SOURCE_ANNOTATION_ID;
-  note.className = "deepread-source-annotation";
+  note.className = "deepread-source-annotation deepread-margin-item";
+  note.dataset.sourceId = sourceId;
+  note.dataset.kind = kind;
   note.setAttribute("role", "note");
-  note.setAttribute("aria-label", "Source margin trace");
+  note.setAttribute("aria-label", `${kind} reading trace for ${label}`);
   note.innerHTML = `
-    <button class="deepread-trace-toggle" type="button" aria-expanded="false" aria-label="Expand source trace">
+    <button class="deepread-trace-toggle" type="button" aria-expanded="false">
       <span class="deepread-trace-number"></span><span class="deepread-trace-title"></span>
     </button>
     <div class="deepread-trace-detail">
-      <div class="deepread-trace-heading"><span>LIVE SOURCE</span><button class="deepread-trace-close" type="button" aria-label="Dismiss source trace">×</button></div>
+      <div class="deepread-trace-heading"><span></span><button class="deepread-trace-close" type="button" aria-label="Dismiss reading trace">×</button></div>
       <p class="deepread-trace-preview"></p>
-      <p class="deepread-trace-full" hidden></p>
+      <div class="deepread-trace-full" hidden></div>
     </div>
   `;
-  note.dataset.sourceId = sourceId;
-  const preview = getSourcePreview(globalThis.DeepReadSourceMapping?.getCurrentMap?.(), sourceId);
-  note.querySelector(".deepread-trace-number").textContent = String(index + 1).padStart(2, "0");
+  note.querySelector(".deepread-trace-number").textContent = trace.marker;
   note.querySelector(".deepread-trace-title").textContent = label;
-  note.querySelector(".deepread-trace-heading span").textContent = preview.provenance;
-  note.querySelector(".deepread-trace-preview").textContent = shortenSourceText(preview.text || sourceText, 116);
-  note.querySelector(".deepread-trace-full").textContent = shortenSourceText(preview.text || sourceText, 280);
+  const heading = note.querySelector(".deepread-trace-heading span");
+  const preview = note.querySelector(".deepread-trace-preview");
+  const full = note.querySelector(".deepread-trace-full");
+  const addParagraph = (text, className = "") => {
+    const paragraph = document.createElement("p");
+    if (className) paragraph.className = className;
+    paragraph.textContent = text;
+    full.append(paragraph);
+  };
+  if (kind === "smart") {
+    heading.textContent = `${type || "CONTEXT"} · READING AID`.toUpperCase();
+    preview.textContent = shortenSourceText(hint, 130);
+    addParagraph(hint, "deepread-trace-main");
+    const cited = getSourcePreview(sourceMap, sourceId);
+    addParagraph(`${cited.provenance}: ${shortenSourceText(cited.text, 180)}`, "deepread-trace-context");
+  } else if (kind === "explained") {
+    heading.textContent = "EXPLAINED · SAVED THIS PAGE";
+    preview.textContent = shortenSourceText(explanation.plainLanguage, 130);
+    addParagraph(explanation.plainLanguage, "deepread-trace-main");
+    addParagraph(`In this article: ${explanation.context}`, "deepread-trace-context");
+    if (explanation.analogy.trim()) addParagraph(`Analogy: ${explanation.analogy}`, "deepread-trace-analogy");
+  } else {
+    const cited = getSourcePreview(sourceMap, sourceId);
+    heading.textContent = cited.provenance;
+    preview.textContent = shortenSourceText(cited.text || sourceText, 116);
+    addParagraph(shortenSourceText(cited.text || sourceText, 280), "deepread-trace-context");
+  }
 
   const toggle = note.querySelector(".deepread-trace-toggle");
-  toggle.addEventListener("click", () => {
-    const isOpen = note.classList.toggle("is-open");
-    toggle.setAttribute("aria-expanded", String(isOpen));
-    toggle.setAttribute("aria-label", isOpen ? "Collapse source trace" : "Expand source trace");
-    note.querySelector(".deepread-trace-preview").hidden = isOpen;
-    note.querySelector(".deepread-trace-full").hidden = !isOpen;
+  toggle.setAttribute("aria-label", `Expand ${label} reading trace`);
+  const setOpen = (expanded) => {
+    note.classList.toggle("is-open", expanded);
+    toggle.setAttribute("aria-expanded", String(expanded));
+    toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${label} reading trace`);
+    preview.hidden = expanded;
+    full.hidden = !expanded;
+  };
+  toggle.addEventListener("click", () => setOpen(!note.classList.contains("is-open")));
+  const guide = document.getElementById(GUIDE_ID);
+  const peek = () => showSourcePeek(guide, {
+    label, kind: type || kind, sourceIds: [sourceId]
+  }, 0, toggle);
+  toggle.addEventListener("mouseenter", peek);
+  toggle.addEventListener("focus", peek);
+  toggle.addEventListener("mouseleave", () => {
+    if (guide?._deepreadPeek?.button === toggle && document.activeElement !== toggle) clearSourcePeek();
   });
-  note.querySelector(".deepread-trace-close").addEventListener("click", removeSourceAnnotation);
-
+  toggle.addEventListener("blur", () => {
+    if (guide?._deepreadPeek?.button === toggle) clearSourcePeek();
+  });
+  note.querySelector(".deepread-trace-close").addEventListener("click", () => removeReadingTrace(trace.id));
   shell.append(note);
-  sourceAnnotationState = { sourceElement };
-  positionSourceAnnotation();
+  trace.element = note;
+  readingTrail.push(trace);
+  setOpen(open);
+  scheduleMarginLayout();
 }
 
 function showSelectionAction(text, context, rect) {
@@ -912,30 +1258,31 @@ function showExplanationCard(explanation, context) {
   card.setAttribute("aria-label", "DeepRead explanation");
   card.innerHTML = `
     <header class="deepread-explanation-header">
-      <div>
-        <span>DEEPREAD / EXPLAIN</span>
-        <strong>For this passage</strong>
-      </div>
+      <span>DEEPREAD / EXPLAIN</span>
       <button class="deepread-explanation-close" type="button" aria-label="Dismiss explanation">×</button>
     </header>
     <section class="deepread-explanation-body">
       <p class="deepread-explanation-plain"></p>
-      <p class="deepread-explanation-context"></p>
+      <div class="deepread-explanation-context"><small>IN THIS ARTICLE</small><p></p></div>
       <p class="deepread-explanation-analogy" hidden></p>
     </section>
-    <footer>AI explanation · source remains on the original page</footer>
+    <footer></footer>
   `;
   card.querySelector(".deepread-explanation-plain").textContent = explanation.plainLanguage.trim();
-  card.querySelector(".deepread-explanation-context").textContent = explanation.context.trim();
+  card.querySelector(".deepread-explanation-context p").textContent = explanation.context.trim();
   if (explanation.analogy.trim()) {
     const analogy = card.querySelector(".deepread-explanation-analogy");
     analogy.hidden = false;
     analogy.textContent = `Analogy: ${explanation.analogy.trim()}`;
   }
+  card.querySelector("footer").textContent = context.sourceId
+    ? "Close or continue reading to leave a small trace here"
+    : "AI explanation · source remains on the original page";
   card.dataset.sourceId = context.sourceId || "";
-  card.querySelector(".deepread-explanation-close").addEventListener("click", removeExplanationCard);
+  card.querySelector(".deepread-explanation-close").addEventListener("click", () => removeExplanationCard());
   document.documentElement.appendChild(card);
-  positionFloatingElement(card, context.rect);
+  activeExplanation = { explanation, context };
+  positionExplanationCard(card, context);
 }
 
 async function explainSelection() {
@@ -1009,7 +1356,14 @@ function handleSelectionChange() {
   dismissedSelectionText = "";
   const currentMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
   if (sourceMapNeedsRefresh || !currentMap?.root?.isConnected) {
-    buildSourceMapSafely();
+    const sourceMap = buildSourceMapSafely();
+    const guide = document.getElementById(GUIDE_ID);
+    if (guide) {
+      guide._deepreadPageMapCache = null;
+      guide._deepreadPendingMap = null;
+      guide._deepreadMapRequestId = (guide._deepreadMapRequestId || 0) + 1;
+      renderFallbackStructure(guide, sourceMap);
+    }
   }
   const mappedSource = getMappedSourceForElement(anchor);
   const contextElement = mappedSource?.element || getReadableContextElement(anchor);
@@ -1084,7 +1438,7 @@ function startDynamicRefresh() {
     );
     if (hasExternalChange) {
       scheduleGuideRefresh();
-      scheduleSourceAnnotationPosition();
+      scheduleMarginLayout();
     }
   });
   dynamicObserver.observe(document.documentElement, { childList: true, characterData: true, subtree: true });
@@ -1112,7 +1466,14 @@ document.addEventListener("keydown", (event) => {
     dismissedSelectionText = window.getSelection()?.toString().trim() || "";
     dismissSelectionAction();
     removeExplanationCard();
-    removeSourceAnnotation();
+    readingTrail.forEach((trace) => {
+      const note = trace.element;
+      if (!note?.classList.contains("is-open")) return;
+      note.classList.remove("is-open");
+      note.querySelector(".deepread-trace-toggle")?.setAttribute("aria-expanded", "false");
+      note.querySelector(".deepread-trace-preview").hidden = false;
+      note.querySelector(".deepread-trace-full").hidden = true;
+    });
     if (atlasIsOpen) {
       setGuideExpanded(shell, false);
     }
@@ -1122,14 +1483,14 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("scroll", () => {
   dismissSelectionAction();
   removeExplanationCard();
-  scheduleSourceAnnotationPosition();
+  scheduleMarginLayout();
   positionSourcePeek();
   const guide = document.getElementById(GUIDE_ID);
   if (guide) updateActiveStructureNode(guide);
 }, { passive: true });
 window.addEventListener("resize", () => {
   scheduleMapLayout();
-  scheduleSourceAnnotationPosition();
+  scheduleMarginLayout();
   positionSourcePeek();
 }, { passive: true });
 

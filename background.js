@@ -173,6 +173,31 @@ function validatePageMapData(data, sourceIds) {
     .filter((node) => node.label && node.sourceIds.length > 0);
 }
 
+function validateSmartReadingData(data, sourceIds) {
+  if (!Array.isArray(data?.items)) return null;
+  const validSourceIds = new Set(sourceIds);
+  const allowedTypes = new Set(["concept", "term", "background", "context"]);
+  const seen = new Set();
+  return data.items
+    .filter((item) => {
+      const key = `${item?.sourceId}:${item?.label}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((item) => ({
+      label: limitText(item?.label, 72),
+      type: limitText(item?.type, 24).toLowerCase(),
+      sourceId: limitText(item?.sourceId, 80),
+      hint: limitText(item?.hint, 220)
+    }))
+    .filter((item) =>
+      item.label && item.hint && allowedTypes.has(item.type) &&
+      validSourceIds.has(item.sourceId)
+    )
+    .slice(0, 5);
+}
+
 function createExplainRequest(payload) {
   const selectedText = limitText(payload?.text, MAX_EXPLANATION_TEXT_CHARS);
   const context = limitText(payload?.context, MAX_CONTEXT_CHARS);
@@ -270,6 +295,63 @@ function createPageMapRequest(payload) {
   };
 }
 
+function createSmartReadingRequest(payload) {
+  const sources = Array.isArray(payload?.sources)
+    ? payload.sources
+        .filter((source) =>
+          source && /^deepread-source-\d+$/.test(source.id) &&
+          typeof source.text === "string"
+        )
+        .slice(0, MAX_PAGE_MAP_SOURCES)
+        .map((source) => ({
+          id: source.id,
+          tag: limitText(source.tag, 20),
+          text: limitText(source.text, MAX_SOURCE_TEXT_CHARS)
+        }))
+    : [];
+
+  if (sources.length < 2 || sources.reduce((total, source) => total + source.text.length, 0) < 240) {
+    return null;
+  }
+
+  return {
+    instructions: [
+      "You are DeepRead identifying a few passages where a reader may need help understanding the supplied page.",
+      "Return zero to five genuinely useful comprehension aids. Zero is correct if nothing needs extra explanation; never fill a quota.",
+      "Use only concept, term, background, or context. Do not critique evidence, bias, assumptions, causality, or counterarguments.",
+      "Each item must cite exactly one supplied Source ID for the passage that prompted it. Prefer the passage itself over a nearby heading.",
+      "Use a specific short label and a concise hint explaining what context would help here. Do not invent facts beyond the supplied text."
+    ].join(" "),
+    input: [
+      `Page title: ${limitText(payload?.page?.title, 240) || "Unknown"}`,
+      `Hostname: ${limitText(payload?.page?.hostname, 160) || "Unknown"}`,
+      "Source blocks (only these IDs may be cited):",
+      sources.map((source) => `[${source.id}] <${source.tag}> ${source.text}`).join("\n")
+    ].join("\n\n"),
+    schema: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string" },
+              type: { type: "string", enum: ["concept", "term", "background", "context"] },
+              sourceId: { type: "string" },
+              hint: { type: "string" }
+            },
+            required: ["label", "type", "sourceId", "hint"]
+          }
+        }
+      },
+      required: ["items"]
+    },
+    sourceIds: sources.map((source) => source.id),
+    maxOutputTokens: 650
+  };
+}
+
 async function handleExplain(payload) {
   const request = createExplainRequest(payload);
   if (!request) {
@@ -317,6 +399,28 @@ async function handlePageMap(payload) {
   return { ok: true, pageMap: { nodes } };
 }
 
+async function handleSmartReading(payload) {
+  const request = createSmartReadingRequest(payload);
+  if (!request) {
+    return {
+      ok: false,
+      code: "NOT_ENOUGH_CONTENT",
+      message: "This page does not contain enough coherent text for Smart Reading."
+    };
+  }
+  const result = await callGemini(request);
+  if (!result.ok) return result;
+  const items = validateSmartReadingData(result.data, request.sourceIds);
+  if (!items || (result.data.items.length > 0 && items.length === 0)) {
+    return {
+      ok: false,
+      code: "INVALID_PROVIDER_RESPONSE",
+      message: "Gemini returned no valid source-linked reading aids. Nothing was displayed."
+    };
+  }
+  return { ok: true, smartReading: { items } };
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log("DeepRead prototype installed.");
 });
@@ -338,6 +442,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((error) => {
         console.warn("DeepRead Page Map handler failed.", error);
         sendResponse({ ok: false, code: "HANDLER_ERROR", message: "DeepRead could not complete the Page Map." });
+      });
+    return true;
+  }
+
+  if (message.type === "DEEPREAD_SMART_READING") {
+    handleSmartReading(message.payload)
+      .then(sendResponse)
+      .catch((error) => {
+        console.warn("DeepRead Smart Reading handler failed.", error);
+        sendResponse({ ok: false, code: "HANDLER_ERROR", message: "DeepRead could not complete Smart Reading." });
       });
     return true;
   }

@@ -28,10 +28,11 @@
 #deepread-shell .deepread-spine {
   position: fixed;
   top: 19vh;
-  right: 5px;
+  right: var(--deepread-spine-right, 5px);
   width: 30px;
   height: 62vh;
   pointer-events: none;
+  transition: right 180ms ease;
 }
 
 #deepread-rail-toggle {
@@ -72,6 +73,51 @@
   font-size: 10px;
   line-height: 1;
 }
+
+#deepread-smart-action {
+  position: absolute;
+  z-index: 2;
+  top: -69px;
+  right: 5px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #91aa9e;
+  border-radius: 50%;
+  background: rgba(250, 249, 243, 0.96);
+  color: #56776a;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#deepread-smart-action:hover,
+#deepread-smart-action:focus-visible,
+#deepread-smart-action.is-active {
+  outline: 2px solid rgba(74, 126, 111, 0.3);
+  background: #dcebe1;
+  color: #27624f;
+}
+
+#deepread-smart-action.is-loading { opacity: 0.55; cursor: wait; }
+
+#deepread-shell .deepread-smart-status {
+  position: absolute;
+  top: -69px;
+  left: 34px;
+  width: 178px;
+  padding: 3px 5px;
+  border-left: 1px solid #6c9a82;
+  background: rgba(255, 253, 247, 0.94);
+  color: #4c6b5e;
+  font: 10px/1.25 Arial, sans-serif;
+  pointer-events: none;
+}
+
+#deepread-shell .deepread-smart-status[hidden] { display: none; }
 
 .deepread-spine-list,
 .deepread-structure-list {
@@ -438,8 +484,8 @@
   -webkit-line-clamp: 2;
 }
 
-/* Living Margin trace: a tiny label first, with a short live excerpt on demand. */
-#deepread-shell #deepread-source-annotation {
+/* Smart aids and the Reading Trail share one small margin language. */
+#deepread-shell .deepread-margin-item {
   position: fixed;
   z-index: 5;
   width: max-content;
@@ -448,7 +494,71 @@
   pointer-events: auto;
 }
 
-#deepread-shell #deepread-source-annotation[hidden] { display: none; }
+#deepread-shell .deepread-margin-item[hidden] { display: none; }
+#deepread-shell.deepread-shell--atlas-open .deepread-margin-item,
+#deepread-shell.deepread-shell--atlas-open .deepread-margin-item * {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.deepread-smart-marker-button {
+  display: flex;
+  max-width: 100%;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 5px 2px 2px;
+  border: 0;
+  border-left: 1px solid #6b9c81;
+  background: rgba(250, 253, 247, 0.92);
+  color: #315e4b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.deepread-smart-marker.is-left .deepread-smart-marker-button { flex-direction: row-reverse; text-align: right; }
+.deepread-smart-marker-button:hover,
+.deepread-smart-marker-button:focus-visible { outline: 2px solid rgba(70, 129, 94, 0.36); }
+.deepread-smart-marker-symbol {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: #467e5f;
+  color: #fff;
+  font-size: 12px;
+}
+.deepread-smart-marker-copy { display: grid; min-width: 0; gap: 1px; }
+.deepread-smart-marker-copy small { color: #628574; font-size: 8px; font-weight: 700; letter-spacing: 0.08em; }
+.deepread-smart-marker-copy strong { overflow: hidden; font: 600 12px/1.15 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
+.deepread-smart-marker-hint {
+  position: absolute;
+  top: 31px;
+  left: 0;
+  width: min(195px, var(--deepread-margin-width, 195px), calc(100vw - 16px));
+  padding: 7px 8px;
+  border-left: 2px solid #467e5f;
+  background: rgba(250, 253, 247, 0.97);
+  box-shadow: 0 4px 14px rgba(32, 58, 49, 0.12);
+  color: #3b6251;
+  font: 11px/1.32 Georgia, serif;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.deepread-smart-marker.is-left .deepread-smart-marker-hint { left: auto; right: 0; }
+.deepread-smart-marker.is-above .deepread-smart-marker-hint { top: auto; bottom: 31px; }
+.deepread-smart-marker:hover .deepread-smart-marker-hint,
+.deepread-smart-marker:focus-within .deepread-smart-marker-hint { opacity: 1; visibility: visible; }
+.deepread-smart-marker.is-compact .deepread-smart-marker-copy { display: none; }
+.deepread-smart-marker.is-compact .deepread-smart-marker-button { padding: 2px; border: 0; border-radius: 50%; }
+.deepread-smart-marker.is-compact .deepread-smart-marker-hint { width: 145px; left: auto; right: 27px; }
+
+.deepread-source-annotation { --trace-accent: #a75d42; }
+.deepread-source-annotation[data-kind="smart"] { --trace-accent: #467e5f; }
+.deepread-source-annotation[data-kind="explained"] { --trace-accent: #4b7588; }
 
 .deepread-trace-toggle {
   display: flex;
@@ -458,7 +568,7 @@
   gap: 5px;
   padding: 2px 5px 2px 2px;
   border: 0;
-  border-left: 1px solid #a75d42;
+  border-left: 1px solid var(--trace-accent);
   background: rgba(255, 253, 247, 0.9);
   color: #37564a;
   text-align: left;
@@ -477,7 +587,7 @@
   flex: none;
   place-items: center;
   border-radius: 50%;
-  background: #a75d42;
+  background: var(--trace-accent);
   color: #fffaf3;
   font-size: 9px;
   font-weight: 700;
@@ -493,10 +603,10 @@
 .deepread-trace-detail {
   position: absolute;
   top: 31px;
-  right: 0;
-  width: min(218px, calc(100vw - 16px));
+  left: 0;
+  width: min(218px, var(--deepread-margin-width, 218px), calc(100vw - 16px));
   padding: 8px 9px;
-  border-left: 2px solid #a75d42;
+  border-left: 2px solid var(--trace-accent);
   background: rgba(255, 253, 247, 0.96);
   box-shadow: 0 4px 14px rgba(32, 58, 49, 0.14);
   opacity: 0;
@@ -506,8 +616,8 @@
 }
 
 .deepread-source-annotation.is-left .deepread-trace-detail {
-  right: auto;
-  left: 0;
+  left: auto;
+  right: 0;
 }
 
 .deepread-source-annotation.is-above .deepread-trace-detail {
@@ -548,11 +658,22 @@
   font: 11px/1.35 Georgia, serif;
 }
 
-#deepread-shell #deepread-source-annotation.is-compact .deepread-trace-title { display: none; }
-#deepread-shell #deepread-source-annotation.is-compact .deepread-trace-toggle {
+.deepread-trace-full[hidden],
+.deepread-trace-preview[hidden] { display: none; }
+.deepread-trace-full .deepread-trace-main { color: #24483c; font-size: 12px; }
+.deepread-trace-full .deepread-trace-context { color: #60766c; }
+.deepread-trace-full .deepread-trace-analogy { color: #87634c; }
+
+#deepread-shell .deepread-source-annotation.is-compact .deepread-trace-title { display: none; }
+#deepread-shell .deepread-source-annotation.is-compact .deepread-trace-toggle {
   padding: 2px;
   border: 0;
   border-radius: 50%;
+}
+#deepread-shell .deepread-source-annotation.is-compact .deepread-trace-detail {
+  left: auto;
+  right: 27px;
+  width: min(210px, calc(100vw - 45px));
 }
 
 .deepread-source-highlight {
@@ -628,14 +749,13 @@
 #deepread-explanation-card {
   position: fixed;
   z-index: 2147483647;
-  width: min(360px, calc(100vw - 16px));
-  max-height: min(70vh, 560px);
+  width: min(260px, calc(100vw - 16px));
+  max-height: min(62vh, 450px);
   overflow-y: auto;
-  border: 1px solid #b9c9c7;
-  border-left: 3px solid #b35f46;
-  border-radius: 2px;
-  background: #f8f5ef;
-  box-shadow: 0 12px 30px rgba(20, 39, 45, 0.2);
+  border: 0;
+  border-left: 2px solid #b35f46;
+  background: rgba(251, 250, 245, 0.98);
+  box-shadow: 0 6px 20px rgba(20, 39, 45, 0.15);
   color: #183b56;
   font-family: Arial, sans-serif;
   pointer-events: auto;
@@ -643,36 +763,34 @@
 
 .deepread-explanation-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 13px 10px;
-  border-bottom: 1px solid #cad4d1;
-  background: #edf3f1;
+  padding: 7px 10px 0;
 }
 
-.deepread-explanation-header div { display: grid; gap: 4px; }
-.deepread-explanation-header span { color: #608089; font-size: 8px; font-weight: 800; letter-spacing: 0.1em; }
-.deepread-explanation-header strong { color: #294854; font: 600 15px/1.2 Georgia, serif; }
+.deepread-explanation-header span { color: #638078; font-size: 8px; font-weight: 800; letter-spacing: 0.1em; }
 
 .deepread-explanation-close {
   width: 24px;
   height: 24px;
-  border: 1px solid #c3d2d0;
-  background: #fffdf8;
+  border: 0;
+  background: transparent;
   color: #506b74;
   font-size: 17px;
   cursor: pointer;
 }
 
-.deepread-explanation-body { display: grid; gap: 10px; padding: 13px; }
+.deepread-explanation-body { display: grid; gap: 10px; padding: 5px 12px 12px; }
 .deepread-explanation-body p { margin: 0; color: #354e5a; font: 500 14px/1.45 Georgia, serif; }
-.deepread-explanation-body .deepread-explanation-plain { color: #183b56; font-size: 16px; }
-.deepread-explanation-context { padding-left: 10px; border-left: 2px solid #a6c0c3; }
-.deepread-explanation-analogy { padding: 9px 10px; border-left: 2px solid #b35f46; background: #f3ebe6; }
+.deepread-explanation-body .deepread-explanation-plain { color: #183b56; font-size: 17px; line-height: 1.4; }
+.deepread-explanation-context { display: grid; gap: 3px; padding-left: 8px; border-left: 1px solid #a6c0c3; }
+.deepread-explanation-context small { color: #6c8581; font-size: 8px; font-weight: 700; letter-spacing: 0.08em; }
+.deepread-explanation-context p { color: #536e70; font-size: 12px; }
+.deepread-explanation-analogy { padding-left: 8px; border-left: 1px solid #b35f46; color: #795e52; font-size: 12px; }
 
 #deepread-explanation-card footer {
-  padding: 0 13px 12px;
+  padding: 0 12px 10px;
   color: #788481;
   font-size: 9px;
 }
@@ -680,6 +798,7 @@
 @media (max-width: 620px) {
   #deepread-shell .deepread-spine,
   #deepread-guide { top: 21vh; height: 56vh; }
+  #deepread-shell .deepread-smart-status { right: 32px; left: auto; width: 130px; }
   #deepread-shell #deepread-xray-label { width: 132px; }
   #deepread-shell #deepread-xray-label .deepread-xray-excerpt { display: none; }
 }
