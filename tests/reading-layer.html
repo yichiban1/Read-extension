@@ -11,6 +11,10 @@ h1 { font:46px/1.15 Georgia,serif; } h2 { margin-top:65px; font:30px/1.3 Georgia
 body.dark { color:#e7e7e7; background:#141920; } body.dark header a { color:#b2d7ff; }
 body.docs main { max-width:950px; margin:30px auto; padding-left:180px; }
 body.docs h1, body.docs h2 { font-family:system-ui,sans-serif; }
+body.slim main { max-width:420px; }
+body.wide main { max-width:none; padding:0 36px 100px 24px; }
+body.sticky header { position:sticky; top:0; z-index:1000; max-height:96px; overflow:auto; background:#faf9f5; }
+body.table table { width:100%; border-collapse:collapse; } body.table td,body.table th { border:1px solid #bcc5c0; padding:10px; text-align:left; }
 body.docs::before { content:'DOCUMENTATION\A Overview\A Parameters\A Limits'; white-space:pre; position:fixed; top:180px; left:20px; font:13px/2 system-ui; }
 pre { padding:16px; background:#e7eae8; color:#20342d; overflow:auto; }
 #qa-result { white-space:pre-wrap; overflow-wrap:anywhere; display:block; margin-top:8px; }
@@ -19,7 +23,8 @@ pre { padding:16px; background:#e7eae8; color:#20342d; overflow:auto; }
 <link rel="stylesheet" href="/content.css"></head><body>
 <header><strong>VISUAL QA — Gemini/runtime mocked; synthetic text</strong><br>
 <a href="/?view=light">Light</a><a href="/?view=dark">Dark</a><a href="/?view=docs">Documentation</a><a href="/?view=zero">Zero findings</a><a href="/narrow">520 × 360 viewport</a>
-<button id="qa-run">Run interaction checks</button><output id="qa-result">Ready. Use D / ✦ / ◇ to explore.</output></header>
+<a href="/?view=wide&autorun=1">Wide</a><a href="/?view=slim&autorun=1">Slim</a><a href="/?view=short&autorun=1">Short</a><a href="/?view=table&autorun=1">Tables</a><a href="/?view=fallback&autorun=1">Fallback</a>
+<button id="qa-run">Run interaction checks</button><output id="qa-result">Ready. Use Atlas / Lens to explore.</output></header>
 <main><article>
 <h1>A city reads its river</h1>
 <p id="claim">The council expects planting trees beside the river to reduce summer temperatures. Its draft says the project will eliminate heat stress across the neighbourhood.</p>

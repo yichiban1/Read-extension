@@ -7,7 +7,7 @@
   const SHELL_ID = "deepread-shell";
   const SELECTION_ACTION_ID = "deepread-selection-action";
   const SOURCE_SELECTOR =
-    "h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, [role=\"heading\"]";
+    "h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, td, th, dt, dd, figcaption, [role=\"heading\"]";
   const GENERIC_SELECTOR = "div, span";
   const SEMANTIC_SELECTORS = ["main", "article", '[role="main"]'];
   const FALLBACK_SELECTOR = "section, div";
@@ -392,11 +392,29 @@
   }
 
   function findReadingRegion() {
-    return (
+    const region = (
       findSemanticRegion() ||
       findDensityRegion() ||
       getRegionMetrics(document.body, true)
     );
+    const hasLensContent = (metrics) => {
+      const passages = metrics.elements.map(getSourceText).filter(text => text.trim().length >= 36);
+      return passages.length >= 2 && passages.reduce((total, text) => total + Math.min(700, text.length), 0) >= 240;
+    };
+    if (hasLensContent(region)) return region;
+    // A tiny semantic article may sit inside a larger, coherent main. Try the
+    // nearest safe ancestors, keeping the same exclusions and quality gates.
+    let ancestor = region.root.parentElement;
+    for (let depth = 0; ancestor && depth < 4; depth += 1, ancestor = ancestor.parentElement) {
+      if (ancestor.tagName === "HTML" || isExcludedRegionRoot(ancestor)) break;
+      const broader = getRegionMetrics(ancestor, true);
+      if (hasLensContent(broader) && broader.linkDensity <= MAX_LINK_DENSITY && broader.density >= 0.5) {
+        broader.fallbackReason = "broader-readable-region";
+        return broader;
+      }
+      if (ancestor === document.body) break;
+    }
+    return region;
   }
 
   function clearPreviousSourceIds() {
@@ -470,7 +488,8 @@
     currentMap = {
       root: region.root,
       sources,
-      elementsById
+      elementsById,
+      fallbackReason: region.fallbackReason || null
     };
     return currentMap;
   }

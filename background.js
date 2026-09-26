@@ -476,7 +476,7 @@ async function handleSmartReading(payload) {
     return {
       ok: false,
       code: "NOT_ENOUGH_CONTENT",
-      message: "This page does not contain enough coherent text for Smart Reading."
+      message: "This page does not contain enough coherent text for Context Lens."
     };
   }
   const result = await callGemini(request);
@@ -538,7 +538,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then(sendResponse)
       .catch((error) => {
         console.warn("DeepRead Smart Reading handler failed.", error);
-        sendResponse({ ok: false, code: "HANDLER_ERROR", message: "DeepRead could not complete Smart Reading." });
+        sendResponse({ ok: false, code: "HANDLER_ERROR", message: "DeepRead could not complete Context Lens." });
       });
     return true;
   }

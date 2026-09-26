@@ -38,9 +38,10 @@ DeepRead currently demonstrates four source-linked reading behaviours within one
    - Structure items should connect back to real source passages.
    - Clicking a structure item should navigate to and visibly identify its source.
 
-2. Smart Lens
+2. Context Lens (existing Smart Reading backend)
    - Offer a few useful comprehension aids for difficult concepts, terms, or background.
-   - Keep each aid linked to its original passage through the Spine and margin trace.
+   - Keep each aid linked to its original passage through the Spine, source-edge tick and trace.
+   - Context and Critical share one Lens control; only one mode is visible, with independent caches.
    - Zero findings is valid; do not fill the page with trivial suggestions.
 
 3. Critical Lens
