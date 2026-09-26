@@ -120,6 +120,8 @@ function focusReadingSurface(kind) {
   if (kind !== "lens") setLensPanelOpen(false);
   if (kind !== "atlas" && shell?.classList.contains("deepread-shell--expanded")) setGuideExpanded(shell, false, false);
   if (kind !== "trace") collapseOpenReadingTraces();
+  const focusPanel = shell?.querySelector("#deepread-focus-panel");
+  if (focusPanel && kind !== "focus") focusPanel.hidden = true;
   if (kind !== "explain") removeExplanationCard();
   if (shell) shell.dataset.detail = kind;
   clearSourcePeek();
@@ -176,43 +178,24 @@ function isHeadingSource(source) {
 }
 
 function getStructureSources(sourceMap) {
-  const sources = sourceMap && Array.isArray(sourceMap.sources)
-    ? sourceMap.sources
-    : [];
+  const sources = sourceMap?.sources || [];
   const headings = sources.filter(isHeadingSource);
-  const sectionHeadings = headings.filter((source) => getSourceLevel(source) >= 2);
-  const contentBlocks = sources.filter((source) =>
-    ["p", "li", "blockquote", "pre", "td", "th", "dt", "dd", "figcaption", "div", "span"].includes(source.tag)
-  );
-  const substantialBlocks = contentBlocks.filter(
-    (source) => source.text.trim().length >= MIN_FALLBACK_PASSAGE_CHARS
-  );
-  const fallbackBlocks = (substantialBlocks.length > 0
-    ? substantialBlocks
-    : contentBlocks
-  ).slice(0, MAX_FALLBACK_STRUCTURE_ITEMS);
+  if (headings.length >= 2) return { mode: "headings", sources: headings };
+  return { mode: "passages", sources: sources.filter(source =>
+    !isHeadingSource(source) && source.text.length >= MIN_FALLBACK_PASSAGE_CHARS).slice(0, 6) };
+}
 
-  if (headings.length >= 2) {
-    const outline = sectionHeadings.length >= 2 ? sectionHeadings : headings;
-    const sampled = outline.length <= MAX_FALLBACK_STRUCTURE_ITEMS
-      ? outline
-      : Array.from({ length: MAX_FALLBACK_STRUCTURE_ITEMS }, (_, index) =>
-        outline[Math.round(index * (outline.length - 1) / (MAX_FALLBACK_STRUCTURE_ITEMS - 1))]
-      );
-    return { mode: "headings", sources: sampled };
-  }
-
-  if (headings.length === 1) {
-    const selectedIds = new Set([headings[0].id, ...fallbackBlocks.map((source) => source.id)]);
-    return {
-      mode: "passages",
-      sources: sources
-        .filter((source) => selectedIds.has(source.id))
-        .slice(0, MAX_FALLBACK_STRUCTURE_ITEMS + 1)
-    };
-  }
-
-  return { mode: "passages", sources: fallbackBlocks };
+function localOutline(sourceMap) {
+  const structure = getStructureSources(sourceMap);
+  const stack = [];
+  return structure.sources.map(source => {
+    const level = getSourceLevel(source);
+    while (stack.length && stack.at(-1) >= level) stack.pop();
+    const depth = structure.mode === "headings" ? stack.length : 0;
+    if (level) stack.push(level);
+    return { label: shortenSourceText(source.text, 120), kind: level ? `H${level}` : "PASSAGE",
+      level, depth, sourceIds: [source.id], isLiveSource: true };
+  });
 }
 
 function shortenSourceText(text, maxLength = 120) {
@@ -525,6 +508,8 @@ function createMapPoint(guide, node, index, isSpine) {
   item.className = isSpine ? "deepread-spine-item" : "deepread-structure-item";
   item.dataset.mapIndex = String(index);
   item.dataset.lane = String(index % 3);
+  item.dataset.depth = String(node.depth || 0);
+  item.style.setProperty("--outline-depth", Math.min(4, node.depth || 0));
 
   const button = document.createElement("button");
   button.className = isSpine ? "deepread-spine-point" : "deepread-structure-button";
@@ -542,7 +527,7 @@ function createMapPoint(guide, node, index, isSpine) {
     copy.className = "deepread-structure-copy";
     const kind = document.createElement("small");
     kind.className = "deepread-structure-meta";
-    kind.textContent = node.isLiveSource ? "LIVE SOURCE" : node.kind.toUpperCase();
+    kind.textContent = node.level ? `H${node.level}${node.role ? " · " + node.role : ""}` : node.isLiveSource ? "PASSAGE" : node.kind.toUpperCase();
     const title = document.createElement("strong");
     title.className = "deepread-structure-label";
     title.textContent = node.label;
@@ -577,7 +562,9 @@ function renderMapNodes(guide, nodes, sourceMap) {
   spine.replaceChildren();
   list.replaceChildren();
   ordered.forEach((node, index) => {
-    spine.append(createMapPoint(guide, node, index, true));
+    if (ordered.length <= 12 || Array.from({ length: 12 }, (_, i) => Math.round(i * (ordered.length - 1) / 11)).includes(index)) {
+      spine.append(createMapPoint(guide, node, index, true));
+    }
     list.append(createMapPoint(guide, node, index, false));
   });
   observeStructureSources(guide, sourceMap);
@@ -592,23 +579,15 @@ function showStructureError(guide, message) {
 
 function renderStructureLoading(guide) {
   guide.querySelector(".deepread-structure-note").textContent =
-    "AI map loading · live source points remain usable";
+    "Adding section roles · local structure remains navigable";
 }
 
 function renderFallbackStructure(guide, sourceMap) {
-  const structure = getStructureSources(sourceMap);
-  const nodes = structure.sources.map((source) => ({
-    label: structure.mode === "headings"
-      ? shortenSourceText(source.text, 72)
-      : shortenSourceText(source.text, 72) || "Source passage",
-    kind: source.tag || "source",
-    sourceIds: [source.id],
-    isLiveSource: true
-  }));
+  const nodes = localOutline(sourceMap);
   renderMapNodes(guide, nodes, sourceMap);
-  guide.querySelector(".deepread-structure-count").textContent = `${nodes.length} live points`;
+  guide.querySelector(".deepread-structure-count").textContent = `${nodes.length} ${getStructureSources(sourceMap).mode === "headings" ? "headings" : "passage anchors"}`;
   guide.querySelector(".deepread-structure-note").textContent =
-    "Live page sources · open the map to request AI structure";
+    "Local outline · original document order. Open Atlas for role enrichment.";
 }
 
 function validatePageMap(pageMap, sourceMap) {
@@ -619,7 +598,7 @@ function validatePageMap(pageMap, sourceMap) {
   return nodes
     .map((node) => {
       const sourceIds = Array.isArray(node?.sourceIds)
-        ? [...new Set(node.sourceIds.filter((id) => validSourceIds.has(id)))]
+        ? [...new Set(node.sourceIds.every((id) => validSourceIds.has(id)) ? node.sourceIds : [])]
         : [];
       const label = typeof node?.label === "string" ? node.label.trim().slice(0, 120) : "";
       const kind = typeof node?.kind === "string" ? node.kind.trim().slice(0, 40) : "source";
@@ -630,14 +609,49 @@ function validatePageMap(pageMap, sourceMap) {
 }
 
 function renderAiPageMap(guide, nodes, sourceMap) {
-  renderMapNodes(guide, nodes, sourceMap);
-  guide.querySelector(".deepread-structure-count").textContent = `${nodes.length} linked points`;
-  guide.querySelector(".deepread-structure-note").textContent =
-    "AI Page Map · points follow the order of their cited passages";
+  const outline = localOutline(sourceMap);
+  const hasHeadings = getStructureSources(sourceMap).mode === "headings";
+  const order = new Map(sourceMap.sources.map((source, index) => [source.id, index]));
+  let structured;
+  if (hasHeadings) {
+    structured = outline.map(node => {
+      const enrichment = nodes.find(item => item.sourceIds.includes(node.sourceIds[0]));
+      return { ...node, role: enrichment?.kind.toUpperCase() || "" };
+    });
+  } else {
+    // Each inferred range must be contiguous in supplied document order.
+    let previousEnd = -1;
+    structured = nodes.slice().sort((a,b) => order.get(a.sourceIds[0]) - order.get(b.sourceIds[0]))
+      .filter(node => {
+        const indices = node.sourceIds.map(id => order.get(id));
+        const start = Math.min(...indices), end = Math.max(...indices);
+        if (start <= previousEnd || indices[0] !== start) return false;
+        previousEnd = end;
+        return true;
+      }).map(node => ({ ...node, depth: 0, inferred: true }));
+    if (!structured.length) structured = outline;
+  }
+  renderMapNodes(guide, structured, sourceMap);
+  guide.querySelector(".deepread-structure-count").textContent = `${structured.length} sections`;
+  guide.querySelector(".deepread-structure-note").textContent = hasHeadings
+    ? "Original heading hierarchy · AI roles where available"
+    : "Inferred contiguous sections · follow original passages";
 }
 
 function buildSourceMapSafely() {
   try {
+    const previous = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
+    const sourceMap = globalThis.DeepReadSourceMapping?.buildSourceMap?.() || null;
+    sourceMapNeedsRefresh = !sourceMap;
+    observeOpenSourceRoots();
+    if (sourceMap && previous === sourceMap) return sourceMap;
+    const guide = document.getElementById(GUIDE_ID);
+    if (guide) {
+      guide._deepreadPageMapCache = null;
+      guide._deepreadPendingMap = null;
+      guide._deepreadMapRequestId = (guide._deepreadMapRequestId || 0) + 1;
+    }
+    stopFocusPath(focusPath || focusStarting ? "The original passages changed. Start a new Focus Path." : "");
     clearSourcePeek();
     document.getElementById(EXPLANATION_CARD_ID)?.remove();
     activeExplanation = null;
@@ -645,8 +659,6 @@ function buildSourceMapSafely() {
     clearSmartReading();
     clearCriticalReading();
     visitedSourceIds = new Set();
-    const sourceMap = globalThis.DeepReadSourceMapping?.buildSourceMap?.() || null;
-    sourceMapNeedsRefresh = !sourceMap;
     return sourceMap;
   } catch (error) {
     sourceMapNeedsRefresh = true;
@@ -678,10 +690,12 @@ function getPageMapPayload(sourceMap) {
     page: getPageContext(),
     sources: (sourceMap?.sources || [])
       .filter((source) => source.text && source.text.trim())
-      .slice(0, MAX_PAGE_MAP_SOURCE_BLOCKS)
+      .filter((source, index, all) => all.length <= MAX_PAGE_MAP_SOURCE_BLOCKS ||
+        Array.from({ length: MAX_PAGE_MAP_SOURCE_BLOCKS }, (_, i) => Math.round(i * (all.length - 1) / (MAX_PAGE_MAP_SOURCE_BLOCKS - 1))).includes(index))
       .map((source) => ({
         id: source.id,
         tag: source.tag,
+        level: getSourceLevel(source),
         text: source.text.slice(0, MAX_PAGE_MAP_SOURCE_CHARS)
       }))
   };
@@ -958,7 +972,7 @@ async function requestSmartReading() {
   const currentMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
   const needsFreshMap = sourceMapNeedsRefresh || !currentMap?.root?.isConnected;
   const sourceMap = needsFreshMap ? buildSourceMapSafely() : currentMap;
-  if (needsFreshMap) renderFallbackStructure(guide, sourceMap);
+  if (needsFreshMap && currentMap !== sourceMap) renderFallbackStructure(guide, sourceMap);
   if (!sourceMap) {
     setSmartStatus("No readable page source was found.");
     return;
@@ -1186,7 +1200,7 @@ async function requestCriticalReading() {
   const currentMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
   const needsFreshMap = sourceMapNeedsRefresh || !currentMap?.root?.isConnected;
   const sourceMap = needsFreshMap ? buildSourceMapSafely() : currentMap;
-  if (needsFreshMap) renderFallbackStructure(guide, sourceMap);
+  if (needsFreshMap && currentMap !== sourceMap) renderFallbackStructure(guide, sourceMap);
   if (!sourceMap) { setCriticalStatus("No readable page source was found."); return; }
   if (criticalLoaded && criticalMap === sourceMap) {
     criticalVisible = activeLensMode === "critical";
@@ -1240,14 +1254,20 @@ async function requestCriticalReading() {
   }
 }
 
-async function refreshGuide(guide) {
+function refreshGuide(guide) {
+  if (!sourceMapNeedsRefresh && guide._deepreadPendingMap?.promise) return guide._deepreadPendingMap.promise;
+  const previousPending = guide._deepreadPendingMap;
+  const promise = loadGuide(guide);
+  if (previousPending === guide._deepreadPendingMap && previousPending?.promise) return previousPending.promise;
+  if (guide._deepreadPendingMap) guide._deepreadPendingMap.promise = promise;
+  return promise;
+}
+
+async function loadGuide(guide) {
   const currentMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
   const needsFreshMap = sourceMapNeedsRefresh || !currentMap?.root?.isConnected;
   const sourceMap = needsFreshMap ? buildSourceMapSafely() : currentMap;
-  if (needsFreshMap) {
-    guide._deepreadPageMapCache = null;
-    guide._deepreadPendingMap = null;
-    guide._deepreadMapRequestId = (guide._deepreadMapRequestId || 0) + 1;
+  if (needsFreshMap && currentMap !== sourceMap) {
     renderFallbackStructure(guide, sourceMap);
   }
   if (guide._deepreadPageMapCache?.sourceMap === sourceMap) {
@@ -1293,7 +1313,7 @@ async function refreshGuide(guide) {
       return;
     }
 
-    guide._deepreadPageMapCache = { sourceMap, nodes };
+    guide._deepreadPageMapCache = { sourceMap, nodes, focusPath: validatePageMap({ nodes: response.pageMap.focusPath }, sourceMap) };
     renderAiPageMap(guide, nodes, sourceMap);
   } catch (error) {
     if (guide.isConnected && guide._deepreadMapRequestId === requestId) {
@@ -1325,6 +1345,149 @@ function setGuideExpanded(shell, expanded, restoreFocus = true) {
   }
 }
 
+let deepReadActive = false;
+let focusPath = null;
+let focusStartToken = 0;
+let focusElement = null;
+let focusStarting = false;
+
+function setDeepReadActive(active) {
+  deepReadActive = active;
+  const shell = ensureDeepReadShell();
+  shell.dataset.mode = active ? "active" : "dormant";
+  shell.querySelector(".deepread-spine").inert = !active;
+  const launcher = shell.querySelector("#deepread-launcher");
+  launcher.setAttribute("aria-pressed", String(active));
+  launcher.setAttribute("aria-label", active ? "Exit DeepRead reading mode" : "Activate DeepRead reading mode");
+  if (!active) {
+    setGuideExpanded(shell, false, false);
+    setLensPanelOpen(false, false);
+    turnOffLens();
+    stopFocusPath();
+    clearSourcePeek();
+    dismissSelectionAction();
+    removeExplanationCard();
+    collapseOpenReadingTraces();
+    launcher.focus({ preventScroll: true });
+  }
+  scheduleMapLayout();
+}
+
+function stopFocusPath(message = "") {
+  focusStartToken++;
+  focusStarting = false;
+  if (focusElement) globalThis.DeepReadSourceMapping?.clearHighlight?.();
+  focusElement?.classList.remove("deepread-focus-source");
+  focusElement = null;
+  focusPath = null;
+  const shell = document.getElementById(SHELL_ID);
+  if (!shell) return;
+  shell.dataset.focus = "off";
+  const action = shell.querySelector("#deepread-focus-action");
+  action?.setAttribute("aria-pressed", "false");
+  action?.setAttribute("aria-busy", "false");
+  const panel = shell.querySelector("#deepread-focus-panel");
+  if (panel) panel.hidden = !message;
+  if (message) {
+    focusReadingSurface("focus");
+    panel.querySelector(".deepread-focus-progress").textContent = message;
+    panel.querySelector(".deepread-focus-label").textContent = "";
+    panel.querySelectorAll("button[data-step]").forEach(button => button.disabled = true);
+  } else if (shell.dataset.detail === "focus") shell.dataset.detail = "none";
+}
+
+function createFocusSequence(cache, sourceMap) {
+  const candidates = cache?.focusPath?.length ? cache.focusPath : cache?.nodes || [];
+  const order = new Map(sourceMap.sources.map((source, index) => [source.id, index]));
+  const used = new Set();
+  return candidates.map(node => {
+    // Old cached Page Maps can provide section anchors. Follow a real passage
+    // within that section, stopping at the next heading.
+    let source = sourceMap.sources.find(source => source.id === node.sourceIds[0]);
+    if (source && isHeadingSource(source)) {
+      const start = order.get(source.id) + 1;
+      source = null;
+      for (const next of sourceMap.sources.slice(start)) {
+        if (isHeadingSource(next)) break;
+        if (next.text.length >= 36) { source = next; break; }
+      }
+    }
+    if (!source || used.has(source.id) || source.text.length < 36) return null;
+    used.add(source.id);
+    return { sourceId: source.id, label: node.label, role: node.kind };
+  }).filter(Boolean).sort((a,b) => order.get(a.sourceId) - order.get(b.sourceId)).slice(0,5);
+}
+
+function positionFocusPanel() {
+  const panel = document.getElementById("deepread-focus-panel");
+  if (!panel || panel.hidden) return;
+  panel.style.top = `${Math.max(12, Math.min(window.innerHeight * 0.19, window.innerHeight - panel.offsetHeight - 12))}px`;
+  const rect = panel.getBoundingClientRect();
+  const sourceRect = focusElement?.getBoundingClientRect();
+  if (!sourceRect || sourceRect.right <= rect.left || sourceRect.bottom < rect.top || sourceRect.top > rect.bottom) return;
+  // Keep the guided passage readable wherever vertical space allows it.
+  const below = sourceRect.bottom + 14;
+  const above = sourceRect.top - rect.height - 14;
+  if (below + rect.height <= window.innerHeight - 12) panel.style.top = `${below}px`;
+  else if (above >= 12) panel.style.top = `${above}px`;
+}
+
+function showFocusStep(index, navigate = true) {
+  if (!focusPath || focusPath.sourceMap !== globalThis.DeepReadSourceMapping?.getCurrentMap?.()) return stopFocusPath();
+  const step = focusPath.steps[index];
+  const element = focusPath.sourceMap.elementsById.get(step?.sourceId);
+  if (!element?.isConnected) return stopFocusPath("The original passage is no longer available.");
+  focusPath.index = index;
+  focusElement?.classList.remove("deepread-focus-source");
+  focusElement = element;
+  element.classList.add("deepread-focus-source");
+  if (navigate) {
+    globalThis.DeepReadSourceMapping.scrollToSourceId(step.sourceId);
+    markSourceVisited(step.sourceId);
+  }
+  focusReadingSurface("focus");
+  const shell = ensureDeepReadShell();
+  const panel = shell.querySelector("#deepread-focus-panel");
+  panel.hidden = false;
+  shell.dataset.focus = "active";
+  shell.querySelector("#deepread-focus-action").setAttribute("aria-pressed", "true");
+  panel.querySelector(".deepread-focus-progress").textContent = `${index + 1} / ${focusPath.steps.length} — ${step.role}`;
+  panel.querySelector(".deepread-focus-label").textContent = step.label;
+  panel.querySelector('[data-step="previous"]').disabled = index === 0;
+  panel.querySelector('[data-step="next"]').disabled = index === focusPath.steps.length - 1;
+  positionFocusPanel();
+}
+
+async function startFocusPath() {
+  if (focusStarting) return stopFocusPath();
+  if (focusPath) {
+    if (document.getElementById(SHELL_ID).dataset.detail !== "focus") return showFocusStep(focusPath.index, false);
+    return stopFocusPath();
+  }
+  focusStarting = true;
+  const token = ++focusStartToken;
+  const shell = ensureDeepReadShell();
+  focusReadingSurface("focus");
+  shell.querySelector("#deepread-focus-action").setAttribute("aria-busy", "true");
+  const panel = shell.querySelector("#deepread-focus-panel");
+  panel.hidden = false;
+  panel.querySelector(".deepread-focus-progress").textContent = "Choosing original passages…";
+  panel.querySelector(".deepread-focus-label").textContent = "";
+  panel.querySelectorAll("button[data-step]").forEach(button => button.disabled = true);
+  const guide = shell.querySelector(`#${GUIDE_ID}`);
+  await refreshGuide(guide);
+  if (token !== focusStartToken || !deepReadActive) return;
+  focusStarting = false;
+  shell.querySelector("#deepread-focus-action").setAttribute("aria-busy", "false");
+  const sourceMap = globalThis.DeepReadSourceMapping.getCurrentMap();
+  const steps = createFocusSequence(guide._deepreadPageMapCache, sourceMap);
+  if (!steps.length) return stopFocusPath("No guided path is available. Atlas still links local sources.");
+  focusPath = { sourceMap, steps, index: 0 };
+  // A late response must not close Explain or another surface chosen meanwhile.
+  if (shell.dataset.detail === "focus") showFocusStep(0);
+  else { shell.dataset.focus = "active"; shell.querySelector("#deepread-focus-action").setAttribute("aria-pressed", "true"); }
+}
+
 function createDeepReadShell() {
   if (document.getElementById(SHELL_ID)) {
     return document.getElementById(SHELL_ID);
@@ -1333,6 +1496,32 @@ function createDeepReadShell() {
   const shell = document.createElement("div");
   shell.id = SHELL_ID;
   shell.className = "deepread-shell";
+  shell.dataset.mode = "dormant";
+  shell.dataset.focus = "off";
+  const launcher = document.createElement("button");
+  launcher.id = "deepread-launcher";
+  launcher.type = "button";
+  launcher.textContent = "D";
+  launcher.setAttribute("aria-label", "Activate DeepRead reading mode");
+  launcher.setAttribute("aria-pressed", "false");
+  launcher.addEventListener("click", () => setDeepReadActive(!deepReadActive));
+  const focusAction = document.createElement("button");
+  focusAction.id = "deepread-focus-action";
+  focusAction.type = "button";
+  focusAction.textContent = "→";
+  focusAction.title = "Focus Path";
+  focusAction.setAttribute("aria-label", "Focus Path. Guide me through original passages");
+  focusAction.setAttribute("aria-pressed", "false");
+  focusAction.setAttribute("aria-controls", "deepread-focus-panel");
+  focusAction.addEventListener("click", () => void startFocusPath());
+  const focusPanel = document.createElement("aside");
+  focusPanel.id = "deepread-focus-panel";
+  focusPanel.setAttribute("aria-label", "Focus Path");
+  focusPanel.hidden = true;
+  focusPanel.innerHTML = '<strong>Focus Path</strong><p class="deepread-focus-progress" role="status" aria-live="polite"></p><p class="deepread-focus-label"></p><div><button type="button" data-step="previous">Previous</button><button type="button" data-step="next">Next</button><button type="button" class="deepread-focus-stop">Stop</button></div>';
+  focusPanel.querySelector('[data-step="previous"]').addEventListener("click", () => { if (focusPath && focusPath.index > 0) showFocusStep(focusPath.index - 1); });
+  focusPanel.querySelector('[data-step="next"]').addEventListener("click", () => { if (focusPath && focusPath.index < focusPath.steps.length - 1) showFocusStep(focusPath.index + 1); });
+  focusPanel.querySelector('.deepread-focus-stop').addEventListener("click", () => { stopFocusPath(); focusAction.focus(); });
 
   const spine = document.createElement("nav");
   spine.className = "deepread-spine";
@@ -1340,11 +1529,12 @@ function createDeepReadShell() {
   const rail = document.createElement("button");
   rail.id = RAIL_ID;
   rail.className = "deepread-rail-toggle";
+  rail.title = "Reading Atlas";
   rail.type = "button";
   rail.setAttribute("aria-expanded", "false");
   rail.setAttribute("aria-controls", GUIDE_ID);
   rail.setAttribute("aria-label", "Open Reading Atlas");
-  rail.innerHTML = '<span class="deepread-rail-mark" aria-hidden="true">D</span><span class="deepread-rail-arrow" aria-hidden="true">+</span>';
+  rail.innerHTML = '<span class="deepread-rail-mark" aria-hidden="true">≡</span><span class="deepread-rail-arrow" aria-hidden="true">+</span>';
   const smartAction = document.createElement("button");
   smartAction.id = SMART_ACTION_ID;
   smartAction.className = "deepread-smart-action";
@@ -1400,7 +1590,8 @@ function createDeepReadShell() {
   const criticalSpineList = document.createElement("ol");
   criticalSpineList.className = "deepread-critical-spine-list";
   criticalSpineList.setAttribute("aria-label", "Critical Lens positions");
-  spine.append(rail, lensAction, spineList, smartSpineList, criticalSpineList);
+  spine.inert = true;
+  spine.append(rail, lensAction, focusAction, spineList, smartSpineList, criticalSpineList);
   lensPanel.append(smartStatus, criticalStatus);
 
   const smartOverview = document.createElement("aside");
@@ -1470,7 +1661,7 @@ function createDeepReadShell() {
   });
 
   lensPanel.append(smartOverview, criticalOverview);
-  shell.append(spine, guide, lensPanel);
+  shell.append(launcher, spine, guide, lensPanel, focusPanel);
   document.documentElement.appendChild(shell);
   updateSmartAction();
   updateCriticalAction();
@@ -1483,8 +1674,7 @@ function ensureDeepReadShell() {
 }
 
 function toggleGuide() {
-  const shell = ensureDeepReadShell();
-  setGuideExpanded(shell, !shell.classList.contains("deepread-shell--expanded"));
+  setDeepReadActive(!deepReadActive);
 }
 
 function getElementFromNode(node) {
@@ -1997,6 +2187,7 @@ function showExplanationCard(explanation, context) {
 }
 
 async function explainSelection() {
+  setDeepReadActive(true);
   if (!selectionContext || !selectionAction) {
     return;
   }
@@ -2049,6 +2240,7 @@ async function explainSelection() {
 function handleSelectionChange() {
   const selection = window.getSelection();
   const text = selection ? selection.toString().trim() : "";
+  if (!text) dismissedSelectionText = "";
   if (!selection || selection.isCollapsed || text.replace(/\s/g, "").length < 3 || text === dismissedSelectionText) {
     if (!text || text === dismissedSelectionText) {
       dismissSelectionAction();
@@ -2069,10 +2261,7 @@ function handleSelectionChange() {
   if (sourceMapNeedsRefresh || !currentMap?.root?.isConnected) {
     const sourceMap = buildSourceMapSafely();
     const guide = document.getElementById(GUIDE_ID);
-    if (guide) {
-      guide._deepreadPageMapCache = null;
-      guide._deepreadPendingMap = null;
-      guide._deepreadMapRequestId = (guide._deepreadMapRequestId || 0) + 1;
+    if (guide && sourceMap !== currentMap) {
       renderFallbackStructure(guide, sourceMap);
     }
   }
@@ -2123,10 +2312,9 @@ function scheduleGuideRefresh() {
       void refreshGuide(guide);
       return;
     }
+    const previous = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
     const sourceMap = buildSourceMapSafely();
-    guide._deepreadPageMapCache = null;
-    guide._deepreadPendingMap = null;
-    guide._deepreadMapRequestId = (guide._deepreadMapRequestId || 0) + 1;
+    if (sourceMap === previous) return;
     renderFallbackStructure(guide, sourceMap);
   }, DYNAMIC_REFRESH_DELAY_MS);
 }
@@ -2141,25 +2329,15 @@ function startDynamicRefresh() {
     return;
   }
   dynamicObserver = new MutationObserver((mutations) => {
-    const mappedRoot = globalThis.DeepReadSourceMapping?.getCurrentMap?.()?.root;
-    const hasExternalChange = mutations.some((mutation) =>
-      !isDeepReadNode(mutation.target) && (
-        !mappedRoot?.isConnected ||
-        (mappedRoot.contains(mutation.target) && (
-          mutation.type === "characterData" ||
-          [...mutation.addedNodes, ...mutation.removedNodes].some((node) => !isDeepReadNode(node))
-        )) ||
-        [...mutation.addedNodes, ...mutation.removedNodes].some((node) =>
-          node === mappedRoot || node.contains?.(mappedRoot)
-        )
-      )
-    );
+    const hasExternalChange = mutations.some(mutation => !isDeepReadNode(mutation.target) &&
+      (mutation.type === "characterData" || [...mutation.addedNodes, ...mutation.removedNodes].some(node => !isDeepReadNode(node))));
     if (hasExternalChange) {
       scheduleGuideRefresh();
       scheduleMarginLayout();
     }
   });
   dynamicObserver.observe(document.documentElement, { childList: true, characterData: true, subtree: true });
+  observeOpenSourceRoots();
   let readingPageLocation = `${location.pathname}${location.search}`;
   window.addEventListener("popstate", () => {
     const nextLocation = `${location.pathname}${location.search}`;
@@ -2169,6 +2347,11 @@ function startDynamicRefresh() {
   });
   // Anchor navigation does not change the Source Map. Actual SPA content
   // changes are observed above, so an ordinary #link must not erase Lens caches.
+}
+
+function observeOpenSourceRoots() {
+  const roots = globalThis.DeepReadSourceMapping?.getCurrentMap?.()?.openShadowRoots || [];
+  for (const root of roots) dynamicObserver?.observe(root, { childList: true, characterData: true, subtree: true });
 }
 
 function initializeDeepRead() {
@@ -2188,6 +2371,11 @@ document.addEventListener("keydown", (event) => {
   const atlasIsOpen = shell?.classList.contains("deepread-shell--expanded");
 
   if (event.key === "Escape") {
+    if (shell?.dataset.detail === "focus") {
+      shell.querySelector("#deepread-focus-panel").hidden = true;
+      shell.dataset.detail = "none";
+      shell.querySelector("#deepread-focus-action").focus({ preventScroll: true });
+    }
     setSmartOverviewOpen(false);
     setCriticalOverviewOpen(false);
     setLensPanelOpen(false);
@@ -2215,6 +2403,7 @@ window.addEventListener("scroll", () => {
   removeExplanationCard();
   scheduleMarginLayout();
   positionSourcePeek();
+  positionFocusPanel();
   const guide = document.getElementById(GUIDE_ID);
   if (guide) updateActiveStructureNode(guide);
 }, { passive: true });
@@ -2223,6 +2412,7 @@ window.addEventListener("resize", () => {
   scheduleMarginLayout();
   positionSourcePeek();
   positionSmartOverview();
+  positionFocusPanel();
 }, { passive: true });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

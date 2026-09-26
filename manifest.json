@@ -4,20 +4,39 @@
   "version": "0.0.1",
   "description": "A source-linked reading layer that keeps the original webpage in view.",
   "action": {
-    "default_title": "Open DeepRead",
-    "default_popup": "popup.html"
+    "default_title": "Toggle DeepRead reading mode"
   },
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["activeTab"],
-  "host_permissions": ["https://generativelanguage.googleapis.com/*"],
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*"
+  ],
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["source-mapping.js", "content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "source-mapping.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
+      "description": "Toggle DeepRead reading mode"
+    }
+  }
 }

@@ -509,28 +509,6 @@
 .deepread-structure-error[hidden],
 .deepread-structure-empty[hidden] { display: none; }
 
-#deepread-shell.deepread-shell--tight #deepread-guide {
-  width: 30px !important;
-}
-
-#deepread-shell.deepread-shell--tight .deepread-structure-item {
-  width: 30px;
-  right: 0;
-}
-
-#deepread-shell.deepread-shell--tight .deepread-structure-item[data-lane="1"],
-#deepread-shell.deepread-shell--tight .deepread-structure-item[data-lane="2"] { right: 0; }
-#deepread-shell.deepread-shell--tight .deepread-structure-copy,
-#deepread-shell.deepread-shell--tight .deepread-structure-item::after,
-#deepread-shell.deepread-shell--tight .deepread-atlas-heading,
-#deepread-shell.deepread-shell--tight .deepread-structure-count,
-#deepread-shell.deepread-shell--tight .deepread-structure-note { display: none; }
-#deepread-shell.deepread-shell--tight .deepread-structure-error {
-  right: -4px;
-  bottom: -103px;
-  width: 172px;
-}
-
 /* X-Ray keeps the source visible and places only a small label beside it. */
 .deepread-source-peek {
   outline: 2px solid rgba(167, 93, 66, 0.73) !important;
@@ -940,3 +918,41 @@
 #deepread-shell .deepread-critical-spine-point { font-size:15px; }
 #deepread-shell .deepread-spine-item { display:grid; place-items:center; }
 #deepread-shell .deepread-spine-point { width:min(16px,var(--deepread-point-size,16px)); height:min(16px,var(--deepread-point-size,16px)); margin:0 auto; }
+
+/* Reading mode: one quiet launcher until the reader explicitly activates it. */
+#deepread-launcher { position:fixed; right:var(--deepread-spine-right); top:50vh; width:28px; height:28px; padding:0; border:1px solid #b7c2b8; border-radius:50%; background:var(--deepread-surface); color:var(--deepread-ink); font:700 13px/1 Georgia,serif; pointer-events:auto; cursor:pointer; box-shadow:0 1px 4px #203c3414; }
+#deepread-shell[data-mode="dormant"] > :not(#deepread-launcher) { display:none !important; }
+#deepread-shell[data-mode="active"] #deepread-launcher { top:auto; bottom:18px; border-color:var(--deepread-accent); }
+#deepread-launcher:focus-visible { outline:2px solid var(--deepread-accent); outline-offset:3px; }
+#deepread-shell[data-mode="active"] .deepread-spine-list::before { border-color:var(--deepread-accent); }
+#deepread-focus-action { position:absolute; top:-110px; right:0; width:30px; height:30px; padding:0; border:1px solid #c8b8a8; border-radius:50%; background:var(--deepread-surface); color:var(--deepread-accent); font:700 18px system-ui; pointer-events:auto; cursor:pointer; }
+#deepread-focus-action[aria-pressed="true"] { background:#f0e3d4; outline:2px solid #9c573e50; }
+#deepread-focus-panel { position:fixed; right:calc(var(--deepread-spine-right) + 50px); top:max(12px,19vh); width:min(260px,calc(100vw - 84px)); max-height:calc(100vh - 24px); overflow:auto; padding:14px; border:1px solid #cfbba8; border-left:3px solid var(--deepread-accent); border-radius:6px; background:var(--deepread-surface); box-shadow:0 4px 18px #203c3418; color:var(--deepread-ink); pointer-events:auto; font:12px/1.5 system-ui; }
+#deepread-focus-panel[hidden] { display:none; }
+#deepread-focus-panel p { margin:8px 0; color:var(--deepread-muted); }
+#deepread-focus-panel .deepread-focus-label { font-weight:600; color:var(--deepread-ink); overflow-wrap:anywhere; }
+#deepread-focus-panel div { display:flex; gap:6px; flex-wrap:wrap; }
+#deepread-focus-panel button { min-height:32px; padding:5px 8px; border:1px solid #cbbdab; border-radius:4px; background:#fffaf2; color:var(--deepread-ink); cursor:pointer; font:12px system-ui; }
+#deepread-focus-panel button:disabled { opacity:.45; cursor:default; }
+.deepread-focus-source { outline:2px solid #9c573e80 !important; outline-offset:5px; background-color:#b78b4220 !important; border-radius:2px; scroll-margin-top:100px; }
+/* Atlas is a scrollable hierarchy. Spine alone carries global coordinates. */
+#deepread-shell #deepread-guide { width:min(264px,calc(100vw - 84px)) !important; height:min(62vh,calc(100vh - 132px)); background:var(--deepread-surface); border:1px solid #d4c6b4; border-left:2px solid var(--deepread-accent); border-radius:5px; padding:12px; box-shadow:0 3px 14px #203c3414; pointer-events:auto; }
+#deepread-shell:not(.deepread-shell--atlas-open) #deepread-guide { pointer-events:none; }
+#deepread-shell #deepread-guide::before { display:none; }
+#deepread-shell .deepread-atlas-heading { position:static; display:flex; justify-content:space-between; font-size:10px; padding:0 0 6px; }
+#deepread-shell .deepread-structure-count { position:static; display:block; padding:0 0 6px; }
+#deepread-shell .deepread-structure-list { position:static; height:calc(100% - 100px); overflow:auto; margin:0; padding:0; pointer-events:auto; }
+#deepread-shell .deepread-structure-item[data-lane] { position:relative; transform:none; top:auto; right:auto; margin:0; padding-left:calc(min(var(--outline-depth),4) * 12px); width:100%; }
+#deepread-shell .deepread-structure-item::after { display:none; }
+#deepread-shell .deepread-structure-button { flex-direction:row; text-align:left; width:100%; min-height:42px; padding:7px 3px; background:transparent; border:0; gap:6px; border-bottom:1px solid #d4c6b450; }
+#deepread-shell .deepread-structure-copy { display:block; text-align:left; border-left:1px solid #c6b197; padding-left:7px; }
+#deepread-shell .deepread-structure-label { font:500 12px/1.45 system-ui; }
+#deepread-shell .deepread-structure-meta { font:10px/1.5 system-ui; color:var(--deepread-accent); }
+#deepread-shell .deepread-structure-number { flex-shrink:0; width:20px; height:20px; font-size:9px; }
+#deepread-shell .deepread-structure-note,#deepread-shell .deepread-structure-error { position:static; display:block; margin:6px 0 0; padding:0; font:10px/1.4 system-ui; white-space:normal; }
+#deepread-shell .deepread-structure-error[hidden] { display:none; }
+#deepread-shell .deepread-structure-empty { position:static; font:12px system-ui; }
+@media(max-height:500px) {
+  #deepread-shell .deepread-spine { top:118px; height:calc(100vh - 144px); }
+  #deepread-shell #deepread-guide { top:118px; height:calc(100vh - 144px); }
+}

@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>DeepRead fixture acceptance matrix</title>
+<style>body{font:14px/1.6 system-ui;background:#faf9f5;color:#203c34;margin:24px}pre{white-space:pre-wrap}iframe{position:absolute;left:-3000px;border:0}a{color:#27694d}</style>
+<h1>Synthetic acceptance matrix</h1><p>Actual DeepRead scripts; extension runtime and Gemini are mocked. This is not unpacked Chrome or external website verification.</p><pre id="results">Running…</pre><script>
+const families=['light','dark','docs','wide','slim','short','sticky','table','fallback','zero','hierarchy','github','wiki','columns','cards','inferred','coverage','shadow','narrow','race'];
+const reports=[];let cursor=0,done=0;
+function update(){document.getElementById('results').textContent=reports.join('\n')+'\nCompleted '+done+' / '+families.length+(done===families.length?'\nFINISHED':'');}
+function run(){if(cursor===families.length)return;const view=families[cursor++];const frame=document.createElement('iframe');frame.width=view==='narrow'?520:view==='wide'?1920:1280;frame.height=view==='narrow'?360:800;frame.src='/?view='+(view==='narrow'?'dark':view==='race'?'light':view)+'&autorun=1'+(view==='race'?'&race=1':'');document.body.append(frame);const start=Date.now();const timer=setInterval(()=>{let text='';try{text=frame.contentDocument.getElementById('qa-result')?.textContent||'';}catch{}if(text.includes('FAILED:')||text.includes('Not unpacked Chrome acceptance.')||Date.now()-start>60000){clearInterval(timer);const pass=text.includes('Not unpacked Chrome acceptance.')&&!text.includes('FAILED:');const assertions=(text.match(/^PASS /gm)||[]).length;reports.push((pass?'PASS ':'FAIL ')+view+' — '+assertions+' assertions'+(pass?'':'\n'+text));done++;update();frame.remove();run();}},350);}
+for(let i=0;i<4;i++)run();
+</script></html>

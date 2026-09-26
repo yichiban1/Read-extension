@@ -49,9 +49,34 @@
     /(?:^|[-_\s])ads?(?:[-_\s]|$)|(?:adsbygoogle|advert|advertisement|sponsor|cookie|consent|gdpr|newsletter|subscribe|popup|modal|utility|toolbar|social[-_ ]?share|share[-_ ]?buttons|comments?|discussion|related[-_ ]?(?:content|articles?)?|recommended|read[-_ ]?next|more[-_ ]?from)/i;
 
   let currentMap = null;
+  let metricsCache = new WeakMap();
   let previousMappedElements = [];
   let highlightedElement = null;
   let highlightTimer = null;
+
+  // Traverse only open roots, preserving host position and live Element anchors.
+  function composedParent(element) {
+    return element.parentElement || element.getRootNode?.().host || null;
+  }
+
+  function queryDeep(root, selector) {
+    const result = [], seen = new Set();
+    function visit(element) {
+      if (seen.has(element) || hasExcludedMarker(element)) return;
+      seen.add(element);
+      if (element.matches(selector)) result.push(element);
+      if (element.tagName === "SLOT") {
+        const assigned = element.assignedElements({ flatten: true });
+        if (assigned.length) { assigned.forEach(visit); return; }
+      }
+      walk(element.shadowRoot || element);
+    }
+    function walk(container) {
+      for (const element of container.children || []) visit(element);
+    }
+    walk(root.shadowRoot || root);
+    return result;
+  }
 
   function normalizeText(text) {
     return String(text || "").replace(/\s+/g, " ").trim();
@@ -116,7 +141,7 @@
       if (current === root) {
         break;
       }
-      current = current.parentElement;
+      current = composedParent(current);
     }
     return false;
   }
@@ -127,7 +152,7 @@
       if (hasExcludedMarker(current)) {
         return true;
       }
-      current = current.parentElement;
+      current = composedParent(current);
     }
     return false;
   }
@@ -157,14 +182,14 @@
     }
 
     // A generic wrapper around a known block is not itself a source.
-    if (element.querySelector(SOURCE_SELECTOR)) {
+    if (queryDeep(element, SOURCE_SELECTOR).length) {
       return false;
     }
 
     // Prefer the smallest meaningful generic text block. This keeps cards,
     // layout wrappers and nested div/span copies from being mapped twice.
     const meaningfulGenericDescendant = Array.from(
-      element.querySelectorAll(GENERIC_SELECTOR)
+      queryDeep(element, GENERIC_SELECTOR)
     ).some(
       (descendant) =>
         getSourceText(descendant).length >= MIN_GENERIC_TEXT_CHARS &&
@@ -186,7 +211,7 @@
       return true;
     }
 
-    let ancestor = element.parentElement;
+    let ancestor = composedParent(element);
     while (ancestor) {
       if (selectedElements.includes(ancestor)) {
         const ancestorText = normalizeText(ancestor.textContent);
@@ -204,27 +229,17 @@
           (nestedReadableElement && ancestorText.includes(elementText))
         );
       }
-      ancestor = ancestor.parentElement;
+      ancestor = composedParent(ancestor);
     }
 
     return false;
-  }
-
-  function compareDocumentOrder(left, right) {
-    if (left === right) {
-      return 0;
-    }
-    const relation = left.compareDocumentPosition(right);
-    return relation & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
   }
 
   function collectReadableElements(root, includeGeneric = false) {
     const selectors = includeGeneric
       ? `${SOURCE_SELECTOR}, ${GENERIC_SELECTOR}`
       : SOURCE_SELECTOR;
-    const candidates = Array.from(root.querySelectorAll(selectors)).sort(
-      compareDocumentOrder
-    );
+    const candidates = queryDeep(root, selectors);
     const selectedElements = [];
     const seenTexts = new Set();
 
@@ -275,11 +290,14 @@
       node = walker.nextNode();
     }
 
+    for (const host of root.querySelectorAll("*")) {
+      if (host.shadowRoot && isVisible(host) && !isExcludedFromRoot(host, root)) length += getVisibleTextLength(host.shadowRoot);
+    }
     return length;
   }
 
   function getLinkTextLength(root) {
-    const links = root.querySelectorAll("a");
+    const links = queryDeep(root, "a");
     return Array.from(links).reduce((total, link) => {
       if (!isVisible(link) || isExcludedFromRoot(link, root)) {
         return total;
@@ -289,6 +307,7 @@
   }
 
   function getRegionMetrics(root, includeGeneric = false) {
+    if (includeGeneric && metricsCache.has(root)) return metricsCache.get(root);
     const elements = collectReadableElements(root, includeGeneric);
     const textLength = elements.reduce(
       (total, element) => total + normalizeText(getSourceText(element)).length,
@@ -300,7 +319,7 @@
       getLinkTextLength(root) / visibleTextLength
     );
 
-    return {
+    const metrics = {
       root,
       elements,
       textLength,
@@ -308,6 +327,8 @@
       density: textLength / visibleTextLength,
       linkDensity
     };
+    if (includeGeneric) metricsCache.set(root, metrics);
+    return metrics;
   }
 
   function isSubstantialArticle(metrics) {
@@ -331,7 +352,7 @@
     const semanticCandidates = [];
 
     for (const selector of SEMANTIC_SELECTORS) {
-      for (const element of document.querySelectorAll(selector)) {
+      for (const element of queryDeep(document.body, selector)) {
         if (isExcludedRegionRoot(element)) {
           continue;
         }
@@ -366,7 +387,7 @@
 
   function findDensityRegion() {
     const candidates = [];
-    for (const element of document.querySelectorAll(FALLBACK_SELECTOR)) {
+    for (const element of queryDeep(document.body, FALLBACK_SELECTOR)) {
       if (isExcludedRegionRoot(element)) {
         continue;
       }
@@ -401,20 +422,36 @@
       const passages = metrics.elements.map(getSourceText).filter(text => text.trim().length >= 36);
       return passages.length >= 2 && passages.reduce((total, text) => total + Math.min(700, text.length), 0) >= 240;
     };
-    if (hasLensContent(region)) return region;
+    const baseline = getRegionMetrics(document.body, true);
+    const coverage = baseline.textLength ? region.textLength / baseline.textLength : 1;
+    region.coverage = coverage;
+    region.usefulTextLength = baseline.textLength;
+    if (hasLensContent(region) && coverage >= 0.6) return region;
     // A tiny semantic article may sit inside a larger, coherent main. Try the
     // nearest safe ancestors, keeping the same exclusions and quality gates.
-    let ancestor = region.root.parentElement;
-    for (let depth = 0; ancestor && depth < 4; depth += 1, ancestor = ancestor.parentElement) {
+    let bestBroader = null;
+    let ancestor = composedParent(region.root);
+    for (let depth = 0; ancestor && depth < 4; depth += 1, ancestor = composedParent(ancestor)) {
       if (ancestor.tagName === "HTML" || isExcludedRegionRoot(ancestor)) break;
       const broader = getRegionMetrics(ancestor, true);
-      if (hasLensContent(broader) && broader.linkDensity <= MAX_LINK_DENSITY && broader.density >= 0.5) {
-        broader.fallbackReason = "broader-readable-region";
-        return broader;
+      if (hasLensContent(broader) && broader.linkDensity <= MAX_LINK_DENSITY && broader.density >= 0.5 && broader.textLength > region.textLength * 1.25) {
+        broader.fallbackReason = hasLensContent(region) ? "low-coverage-broader-region" : "broader-readable-region";
+        broader.coverage = baseline.textLength ? broader.textLength / baseline.textLength : 1;
+        broader.usefulTextLength = baseline.textLength;
+        bestBroader = broader;
+        if (broader.coverage >= 0.6) return broader;
       }
       if (ancestor === document.body) break;
     }
-    return region;
+    // Deeply nested semantic roots can exceed the bounded ancestor search.
+    // The broader body strategy keeps exactly the same exclusions and gates.
+    if (coverage < 0.6 && hasLensContent(baseline) && baseline.linkDensity <= MAX_LINK_DENSITY && baseline.density >= 0.5 && baseline.textLength > region.textLength * 1.25) {
+      baseline.fallbackReason = "low-coverage-body-region";
+      baseline.coverage = 1;
+      baseline.usefulTextLength = baseline.textLength;
+      return baseline;
+    }
+    return bestBroader || region;
   }
 
   function clearPreviousSourceIds() {
@@ -470,16 +507,33 @@
   }
 
   function buildSourceMap() {
+    metricsCache = new WeakMap();
+    const region = findReadingRegion();
+    if (currentMap && currentMap.root === region.root && currentMap.sources.length === region.elements.length &&
+      region.elements.every((element, index) => {
+        const source = currentMap.sources[index];
+        return currentMap.elementsById.get(source.id) === element && source.text === getSourceText(element) && source.level === (getHeadingLevel(element) || 0);
+      })) {
+      currentMap.coverage = region.coverage ?? 1;
+      currentMap.usefulTextLength = region.usefulTextLength ?? region.textLength;
+      currentMap.openShadowRoots = queryDeep(document.body, "*").filter(element => element.shadowRoot && !isExcludedRegionRoot(element)).map(element => element.shadowRoot);
+      return currentMap;
+    }
     clearHighlight();
     clearPreviousSourceIds();
-
-    const region = findReadingRegion();
     const elementsById = new Map();
     const sources = region.elements.map((element, index) => {
       const id = `${SOURCE_ID_PREFIX}${index + 1}`;
       const source = getSourceDescriptor(element);
       source.id = id;
       element.setAttribute(SOURCE_ATTRIBUTE, id);
+      const root = element.getRootNode();
+      if (root.host && !root.querySelector("style[data-deepread-shadow-style]")) {
+        const style = document.createElement("style");
+        style.dataset.deepreadShadowStyle = "true";
+        style.textContent = ".deepread-focus-source,.deepread-source-highlight{outline:2px solid #9c573e80!important;outline-offset:5px;background-color:#b78b4220!important;scroll-margin-top:100px}";
+        root.append(style);
+      }
       elementsById.set(id, element);
       return source;
     });
@@ -489,7 +543,10 @@
       root: region.root,
       sources,
       elementsById,
-      fallbackReason: region.fallbackReason || null
+      fallbackReason: region.fallbackReason || null,
+      coverage: region.coverage ?? 1,
+      usefulTextLength: region.usefulTextLength ?? region.textLength,
+      openShadowRoots: queryDeep(document.body, "*").filter(element => element.shadowRoot && !isExcludedRegionRoot(element)).map(element => element.shadowRoot)
     };
     return currentMap;
   }
@@ -524,6 +581,7 @@
   globalThis.DeepReadSourceMapping = Object.freeze({
     buildSourceMap,
     getCurrentMap,
-    scrollToSourceId
+    scrollToSourceId,
+    clearHighlight
   });
 })();

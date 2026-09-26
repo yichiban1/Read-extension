@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 FILES = {
     '/': ('tests/reading-layer.html', 'text/html; charset=utf-8'),
+    '/matrix': ('tests/matrix.html', 'text/html; charset=utf-8'),
     '/narrow': ('tests/narrow.html', 'text/html; charset=utf-8'),
     '/qa.js': ('tests/reading-layer.js', 'text/javascript; charset=utf-8'),
     '/content.js': ('content.js', 'text/javascript; charset=utf-8'),
