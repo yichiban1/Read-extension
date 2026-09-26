@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DeepRead reading layer — mocked visual QA</title>
+<style>
+body { margin:0; background:#faf9f5; color:#242f2a; font:17px/1.75 system-ui,sans-serif; }
+header { padding:14px 24px; border-bottom:1px solid #c5ccc6; font:13px/1.5 system-ui; }
+header a, header button { margin-right:12px; }
+header button { padding:6px; cursor:pointer; }
+main { max-width:680px; margin:48px auto; padding:0 24px 160px; }
+h1 { font:46px/1.15 Georgia,serif; } h2 { margin-top:65px; font:30px/1.3 Georgia,serif; }
+body.dark { color:#e7e7e7; background:#141920; } body.dark header a { color:#b2d7ff; }
+body.docs main { max-width:950px; margin:30px auto; padding-left:180px; }
+body.docs h1, body.docs h2 { font-family:system-ui,sans-serif; }
+body.docs::before { content:'DOCUMENTATION\A Overview\A Parameters\A Limits'; white-space:pre; position:fixed; top:180px; left:20px; font:13px/2 system-ui; }
+pre { padding:16px; background:#e7eae8; color:#20342d; overflow:auto; }
+#qa-result { white-space:pre-wrap; overflow-wrap:anywhere; display:block; margin-top:8px; }
+@media(max-width:700px) { main { margin-top:25px; padding:0 36px 100px 18px; } h1 { font-size:32px; } body.docs main { padding-left:18px; } body.docs::before { display:none; } }
+</style>
+<link rel="stylesheet" href="/content.css"></head><body>
+<header><strong>VISUAL QA — Gemini/runtime mocked; synthetic text</strong><br>
+<a href="/?view=light">Light</a><a href="/?view=dark">Dark</a><a href="/?view=docs">Documentation</a><a href="/?view=zero">Zero findings</a><a href="/narrow">520 × 360 viewport</a>
+<button id="qa-run">Run interaction checks</button><output id="qa-result">Ready. Use D / ✦ / ◇ to explore.</output></header>
+<main><article>
+<h1>A city reads its river</h1>
+<p id="claim">The council expects planting trees beside the river to reduce summer temperatures. Its draft says the project will eliminate heat stress across the neighbourhood.</p>
+<p>The proposal models shade and evaporation together. The model uses average wind conditions and assumes that young trees survive their first three summers.</p>
+<h2 id="measurement">What was measured</h2>
+<p>Teams recorded temperatures at twelve street corners during two afternoons. They did not sample overnight conditions. The proposal describes these measurements as a starting point for a longer study.</p>
+<p>The measurements describe local conditions. They cannot by themselves separate the effects of shade, traffic, surface materials and wind. The authors recommend repeating the survey.</p>
+<h2>How the model works</h2>
+<p>Evapotranspiration describes how water moves from soil and plants into the air. Its cooling effect depends on water availability, leaf area and local weather, so results can vary by season.</p>
+<pre>cooling = shade + evaporation
+scenario: average wind, sufficient water</pre>
+<p>A sensitivity analysis varies these inputs instead of assuming that one estimate represents every future summer. The report includes several scenarios and explains that they are estimates.</p>
+<h2>Whose priorities count</h2>
+<p>Residents who walk to the station prioritise shade along the route. Shopkeepers ask that delivery access remain available. The draft gives pedestrian comfort greater weight than parking capacity.</p>
+<p>The authors acknowledge this choice and invite residents to compare the alternatives. A public meeting will discuss maintenance costs as well as the construction budget.</p>
+<h2>Conditions and maintenance</h2>
+<p>The initial budget covers planting and irrigation equipment. Ongoing labour is listed separately. Responsibility for replacing damaged trees will be agreed before construction begins.</p>
+<p>One scenario uses stored rainwater; another relies on the municipal supply during drought. Neither is described as guaranteed. The published estimates include a range of operating costs.</p>
+<h2>What remains uncertain</h2>
+<p>The design team plans another summer of measurement before committing to a final planting pattern. They will compare readings at planted sites with nearby untreated streets.</p>
+<p>The study cannot tell the reader what every neighbourhood should choose. It presents local observations, model assumptions and practical choices for this particular river corridor.</p>
+</article></main>
+<script src="/qa.js"></script><script src="/source-mapping.js"></script><script src="/content.js"></script>
+</body></html>

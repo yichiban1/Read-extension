@@ -135,6 +135,11 @@ After implementation:
 - explain what changed
 - explain how the user can test it
 
+Fixture checks in `tests/` mock runtime/Gemini messages. Keep those results
+separate from unpacked-extension Chrome and real-provider verification.
+Do not serve or log `config.local.js` in QA. Preserve the four existing AI
+request paths and the five-item session-local Reading Trail.
+
 Do not invent additional product requirements.
 
 If several implementation approaches are possible, favour the one that

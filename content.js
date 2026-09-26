@@ -208,7 +208,7 @@ function positionLensSpinePoints(sourceMap, rootTop, rootHeight) {
     }))
     .sort((left, right) => left.position - right.position);
   const spineHeight = document.querySelector(".deepread-spine")?.getBoundingClientRect().height || 400;
-  const gap = Math.min(0.055, 20 / spineHeight);
+  const gap = Math.min(22 / spineHeight, 0.88 / Math.max(1, points.length - 1));
   points.forEach((point, index) => {
     if (index) point.position = Math.max(point.position, points[index - 1].position + gap);
   });
@@ -255,7 +255,7 @@ function positionMapNodes(guide) {
   const rightMargin = window.innerWidth - middleRight;
   shell.style.setProperty(
     "--deepread-spine-right",
-    `${rightMargin >= 105 ? Math.max(5, rightMargin - 58) : 5}px`
+    `${rightMargin >= 105 ? Math.max(5, rightMargin - 82) : 5}px`
   );
   shell.classList.toggle("deepread-shell--smart-compact", rightMargin < 190);
   const atlasWidth = Math.min(268, Math.max(64, window.innerWidth - middleRight - 55));
@@ -353,11 +353,13 @@ function showSourcePeek(guide, node, index, button) {
     window.innerWidth - sourceRect.right >= labelWidth + 18;
   const visibleTraceAtSource = readingTrail.some((trace) =>
     trace.sourceId === node.sourceIds[0] && trace.element?.isConnected && !trace.element.hidden);
+  const isLensSpine = button.matches(".deepread-smart-spine-point, .deepread-critical-spine-point");
   if (sourceIsVisible &&
       (button.classList.contains("deepread-structure-button") ||
        button.classList.contains("deepread-smart-marker-button") ||
        button.classList.contains("deepread-critical-marker-button") ||
-       button.classList.contains("deepread-trace-toggle") || visibleTraceAtSource || !hasLabelMargin)) {
+       button.classList.contains("deepread-trace-toggle") ||
+       (!isLensSpine && (visibleTraceAtSource || !hasLabelMargin)))) {
     return;
   }
   const label = document.createElement("aside");
@@ -630,9 +632,10 @@ function positionLensOverview(overviewId, actionId) {
   const rightSpace = window.innerWidth - anchor.right - 16;
   const width = rightSpace >= 110 ? Math.min(220, rightSpace) : Math.min(180, window.innerWidth - 16);
   overview.style.width = `${width}px`;
-  overview.style.left = `${rightSpace >= 110
+  const left = rightSpace >= 110
     ? anchor.right + 8
-    : Math.max(8, anchor.left - width - 8)}px`;
+    : anchor.left - width - 8;
+  overview.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
   overview.style.top = `${window.innerWidth <= 620 ? 8 :
     Math.max(8, Math.min(anchor.bottom + 8, window.innerHeight - overview.offsetHeight - 8))}px`;
 }
@@ -647,6 +650,8 @@ function setSmartOverviewOpen(open) {
   if (!overview || !button) return;
   overview.hidden = !open;
   button.setAttribute("aria-expanded", String(open));
+  if (!open && overview.contains(document.activeElement)) button.focus({ preventScroll: true });
+  if (!open) clearSourcePeek();
   if (open) {
     setCriticalOverviewOpen(false);
     positionSmartOverview();
@@ -660,6 +665,7 @@ function updateSmartAction() {
   button.classList.toggle("is-active", active);
   button.classList.toggle("is-zero", active && smartReadingItems.length === 0);
   button.classList.toggle("is-loading", smartReadingLoading);
+  button.setAttribute("aria-busy", String(smartReadingLoading));
   button.setAttribute("aria-pressed", String(active));
   button.setAttribute("aria-label", smartReadingLoading
     ? "Smart Lens is analysing this article"
@@ -938,6 +944,8 @@ function setCriticalOverviewOpen(open) {
   if (!overview || !button) return;
   overview.hidden = !open;
   button.setAttribute("aria-expanded", String(open));
+  if (!open && overview.contains(document.activeElement)) button.focus({ preventScroll: true });
+  if (!open) clearSourcePeek();
   if (open) {
     setSmartOverviewOpen(false);
     positionCriticalOverview();
@@ -951,6 +959,7 @@ function updateCriticalAction() {
   button.classList.toggle("is-active", active);
   button.classList.toggle("is-zero", active && criticalItems.length === 0);
   button.classList.toggle("is-loading", criticalLoading);
+  button.setAttribute("aria-busy", String(criticalLoading));
   button.setAttribute("aria-pressed", String(active));
   button.setAttribute("aria-label", criticalLoading
     ? "Critical Lens is analysing this article"
@@ -1575,6 +1584,7 @@ function collapseOpenReadingTraces(except = null) {
 }
 
 function positionMarginItems() {
+  const spineRect = document.querySelector(`#${SHELL_ID} .deepread-spine`)?.getBoundingClientRect();
   const entries = [
     ...readingTrail.map((trace) => ({ element: trace.element, sourceElement: trace.sourceElement })),
     ...smartReadingItems.filter((item) => item.element).map((item) => ({
@@ -1597,13 +1607,14 @@ function positionMarginItems() {
     element.classList.remove("is-left", "is-compact");
     element.style.maxWidth = "210px";
     const gap = 10;
-    const rightSpace = window.innerWidth - rect.right;
+    const rightStart = Math.max(rect.right + gap, spineRect ? spineRect.right + 8 : 0);
+    const rightSpace = window.innerWidth - rightStart;
     const leftSpace = rect.left;
     let side = "right";
     let left;
-    if (rightSpace >= 160) {
-      element.style.maxWidth = `${Math.min(210, rightSpace - gap - 8)}px`;
-      left = rect.right + gap;
+    if (rightSpace >= 150) {
+      element.style.maxWidth = `${Math.min(210, rightSpace - 8)}px`;
+      left = rightStart;
     } else if (leftSpace >= 160) {
       side = "left";
       element.classList.add("is-left");
@@ -1613,7 +1624,8 @@ function positionMarginItems() {
       side = "compact";
       element.classList.add("is-compact");
       element.style.maxWidth = "30px";
-      left = Math.min(Math.max(6, rect.right - 18), window.innerWidth - 36);
+      left = Math.max(6, Math.min(rect.right - 18, window.innerWidth - 36,
+        spineRect ? spineRect.left - 48 : window.innerWidth));
     }
     element.style.setProperty("--deepread-margin-width", side === "compact" ? "210px" : element.style.maxWidth);
     element.style.left = `${Math.max(6, Math.min(left, window.innerWidth - element.offsetWidth - 6))}px`;
@@ -1643,6 +1655,26 @@ function positionMarginItems() {
       entry.element.style.top = `${top}px`;
       entry.element.classList.toggle("is-above", top > window.innerHeight - 150);
     });
+  });
+  readingTrail.forEach((trace) => {
+    const note = trace.element;
+    const detail = note?.querySelector(".deepread-trace-detail");
+    if (!detail || note.hidden) return;
+    const anchor = note.getBoundingClientRect();
+    detail.style.maxHeight = `${Math.min(360, window.innerHeight - 16)}px`;
+    const height = detail.offsetHeight;
+    const below = anchor.bottom + 5;
+    const top = below + height <= window.innerHeight - 8
+      ? below : Math.max(8, Math.min(anchor.top - height - 5, window.innerHeight - height - 8));
+    detail.style.top = `${top - anchor.top}px`;
+    detail.style.bottom = "auto";
+    // Clamp the actual detail box, including compact/left margin variants.
+    detail.style.removeProperty("left");
+    detail.style.removeProperty("right");
+    const rect = detail.getBoundingClientRect();
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8));
+    detail.style.left = `${left - anchor.left}px`;
+    detail.style.right = "auto";
   });
   const openDetails = readingTrail.filter((trace) => trace.element?.classList.contains("is-open") &&
     !trace.element.hidden).map((trace) => ({
@@ -1675,6 +1707,7 @@ function addReadingTrace({ kind, label, sourceId, sourceIds, sourceElement, mark
   if (open) collapseOpenReadingTraces();
   const existing = readingTrail.find((trace) =>
     trace.kind === kind && trace.sourceId === sourceId &&
+    (!["smart", "critical"].includes(kind) || trace.label === label) &&
     (kind !== "explained" || trace.selectedText === selectedText)
   );
   if (existing) removeReadingTrace(existing.id);
@@ -1726,7 +1759,24 @@ function addReadingTrace({ kind, label, sourceId, sourceIds, sourceElement, mark
     addParagraph(prompt, "deepread-trace-main");
     const cited = getSourcePreview(sourceMap, sourceId);
     addParagraph(`${cited.provenance}: ${shortenSourceText(cited.text, 180)}`, "deepread-trace-context");
-    if (sourceIds?.length > 1) addParagraph(`Also linked: ${sourceIds.slice(1).join(", ")}`, "deepread-trace-context");
+    if (sourceIds?.length > 1) {
+      const links = document.createElement("div");
+      links.className = "deepread-trace-source-links";
+      sourceIds.slice(1).forEach((id, index) => {
+        const source = getSourceById(sourceMap, id);
+        if (!source) return;
+        const link = document.createElement("button");
+        link.type = "button";
+        link.textContent = `Related passage ${index + 1} ↗`;
+        link.setAttribute("aria-label", `Follow related passage: ${shortenSourceText(source.text, 100)}`);
+        link.addEventListener("click", () => {
+          if (sourceMap !== globalThis.DeepReadSourceMapping?.getCurrentMap?.()) return;
+          if (globalThis.DeepReadSourceMapping.scrollToSourceId(id)) markSourceVisited(id);
+        });
+        links.append(link);
+      });
+      full.append(links);
+    }
   } else if (kind === "explained") {
     heading.textContent = "EXPLAINED · SAVED THIS PAGE";
     preview.textContent = shortenSourceText(explanation.plainLanguage, 130);
@@ -2012,8 +2062,15 @@ function startDynamicRefresh() {
     }
   });
   dynamicObserver.observe(document.documentElement, { childList: true, characterData: true, subtree: true });
-  window.addEventListener("popstate", scheduleGuideRefresh);
-  window.addEventListener("hashchange", scheduleGuideRefresh);
+  let readingPageLocation = `${location.pathname}${location.search}`;
+  window.addEventListener("popstate", () => {
+    const nextLocation = `${location.pathname}${location.search}`;
+    if (nextLocation === readingPageLocation) return;
+    readingPageLocation = nextLocation;
+    scheduleGuideRefresh();
+  });
+  // Anchor navigation does not change the Source Map. Actual SPA content
+  // changes are observed above, so an ordinary #link must not erase Lens caches.
 }
 
 function initializeDeepRead() {
@@ -2049,11 +2106,14 @@ document.addEventListener("keydown", (event) => {
     if (atlasIsOpen) {
       setGuideExpanded(shell, false);
     }
+    clearSourcePeek();
+    scheduleMarginLayout();
     return;
   }
 });
 window.addEventListener("scroll", () => {
   setSmartOverviewOpen(false);
+  setCriticalOverviewOpen(false);
   dismissSelectionAction();
   removeExplanationCard();
   scheduleMarginLayout();

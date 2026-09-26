@@ -203,11 +203,13 @@ function validateCriticalReadingData(data, sourceIds) {
   const validIds = new Set(sourceIds);
   const types = new Set(["evidence", "assumption", "causal", "uncertainty", "counterpoint", "value"]);
   const seen = new Set();
-  return data.items.map((item) => ({
+  return data.items.filter((item) => Array.isArray(item?.sourceIds) &&
+    item.sourceIds.length > 0 && item.sourceIds.every((id) => validIds.has(id)))
+    .map((item) => ({
     label: limitText(item?.label, 72),
     type: limitText(item?.type, 24).toLowerCase(),
     sourceIds: Array.isArray(item?.sourceIds)
-      ? [...new Set(item.sourceIds.filter((id) => validIds.has(id)))].slice(0, 3) : [],
+      ? [...new Set(item.sourceIds)].slice(0, 3) : [],
     prompt: limitText(item?.prompt, 260)
   })).filter((item) => {
     const key = `${item.sourceIds[0]}:${item.type}:${item.label}`;

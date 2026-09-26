@@ -1,43 +1,50 @@
 # DeepRead Project State
 
-Updated: 2026-09-25
+Updated: 2026-09-26
 
 ## Product direction
 
-The original webpage remains the reading surface. Reading Spine, Spatial Atlas, Smart Lens, Critical Lens, Source X-Ray, Select Text → Explain, and the session-local Reading Trail form one source-linked assistance layer. Atlas shows structure; Smart helps comprehension; Critical raises focused reading questions; Explain responds to a passage the reader selects.
+The original webpage remains the reading surface. Atlas shows structure; Smart Lens helps comprehension; Critical Lens raises focused reading questions; Explain responds to selected text. Reading Spine, X-Ray, Spotlight and the five-item session-local Reading Trail connect these behaviours. No extra primary behaviour or provider was added.
 
-## Current implementation
+## Critical Lens implementation
 
-- Source Mapping builds live `deepread-source-<number>` IDs. The Spine initially shows real page-source positions without AI. Atlas requests the existing Page Map on demand, keeps the article visible, and navigates to live passages with Source Spotlight.
-- Smart Lens remains an independent on-demand Gemini comprehension request, with cached 0–5 results for the current Source Map. Its overview, ✦ Spine points, and margin markers link to cited passages.
-- Critical Lens adds one on-demand Gemini structured-output request. It asks for 0–3 useful questions in `evidence`, `assumption`, `causal`, `uncertainty`, `counterpoint`, or `value`. Each item carries one or more supplied Source IDs. The service worker filters unknown IDs and invalid types; the content script checks links again before display. An empty result is valid and shows no invented markers.
-- Critical has its own cached overview, ◇ global Spine positions, Source X-Ray, source navigation, and Critical Reading Trail trace. Turning it off and back on, or reopening the overview, reuses results for the unchanged Source Map. Smart and Critical can remain active together without rerunning each other.
-- Atlas, Smart, Critical, and Explained traces share the five-item session-local Reading Trail. Lens points share one collision-aware positioning lane. Margin items stack within the viewport; items that cannot fit are temporarily hidden until their sources move. Open trace details recede when another trace or Explain takes focus.
-- The three small controls now form one vertical cluster. Semantic accents distinguish Atlas/navigation, Smart, Critical, and Explained traces. DeepRead surfaces remain opaque and light for contrast on dark host pages. Spine points gain a restrained visited state.
+The latest checkout already included Critical Lens before this pass: one independent structured Gemini request, 0–3 findings in evidence, assumption, causal, uncertainty, counterpoint or value, and supplied deepread-source-<number> IDs. Questions are framed for examination rather than as fact-checking verdicts. Zero findings is valid. The ◇ control, cached overview, global Spine positions, X-Ray, source navigation and Critical traces coexist with Smart Lens. Reopening or toggling either Lens reuses its result for the unchanged Source Map.
 
-## Verification performed
+This pass strengthens validation: any unknown cited ID rejects the entire finding instead of silently dropping that citation. Invalid types, empty copy, duplicate findings and several categorical verdict phrases are also rejected. This limited copy guard is not proof of semantic support or an exhaustive verdict-language classifier.
 
-- Static: `node --check` passed for `content.js` and `background.js`; `git diff --check` passed. No new framework or provider was added.
-- Real Gemini: one synthetic Critical Lens request using the existing local Gemini configuration returned three validated findings citing IDs supplied in that request. This verifies the request/response path, not critical-reading quality on real articles.
-- Codex in-app browser, local HTML fixture with mocked extension messaging: checked a light article, a dark article, and a documentation-style layout. The normal page stayed visible; Smart and Critical markers were distinguishable; Critical count, overview, source navigation, Source Spotlight, X-Ray via keyboard focus, and a Critical trace appeared. A zero-result fixture showed `0`, an empty overview, and no Critical markers. Turning Critical off and back on kept its fixture request count at one.
-- In the same fixture, Explain still opened from selected original text while Critical was active. A collision between its card and an expanded Critical trace was observed and corrected by collapsing the open trace detail. A 520 px viewport check showed the compact controls and overview within viewport bounds; the small overview can still cover part of article text while open.
-- **Chrome extension manual verification has not been performed in this iteration.** The computer-use environment exposed only Codex's in-app browser, not a controllable Chrome window. The fixture mocks extension messaging and does not test unpacked-extension reload, service-worker lifecycle, or real-site CSS conflicts.
+## Shared interaction polish
+
+- Short-window layouts reserve top space for D, ✦ and ◇. Smart/Critical Spine targets are 20 px, with a shared collision lane and 22 px spacing where space permits. The article-edge offset accounts for the additional lane.
+- Margin markers reserve the Spine/control lane, use remaining right/left margin space, or recede to compact source-linked markers. Expanded trace details stay inside the viewport and scroll internally if long. The five-item limit and session-only storage remain.
+- Both overviews close on scroll, restore focus from a hidden overview to its control, and clear X-Ray on dismissal. Result labels wrap. Controls expose analysing state with aria-busy.
+- Ordinary fragment navigation no longer rebuilds the map and erases Page Map/Smart/Critical caches. Route changes and observed content mutations still refresh the map.
+- Additional Critical citations have related-passage navigation buttons. Distinct Smart/Critical findings at the same passage can retain distinct traces. Trace focus accents follow their type. Lens Spine focus retains its type/label peek in compact layouts.
+- Atlas, Smart, Critical and Explained traces remain source-attached. No broad architecture rewrite was performed.
+
+## Verification performed in this pass
+
+- Syntax: node --check passed for content.js, background.js, source-mapping.js and tests/reading-layer.js. git diff --check passed.
+- Service-worker contract: node tests/critical-reading.test.cjs passed zero output, valid output, mixed valid/unknown citations, invalid types, verdict guard, deduplication, three-item limit and malformed/runtime response handling. Network and local configuration were mocked; no real Gemini call was made in this pass.
+- Codex in-app browser: actual source-mapping.js, content.js and content.css loaded against synthetic articles with mocked extension messages. All 21 interaction checks passed on light, dark, documentation and a 520 × 360 dark child viewport. A zero-result fixture passed its ten applicable checks. Each nonzero suite recorded one Page Map, one Smart, one Critical and one Explain mock request despite cache reopening and anchor navigation.
+- Checks cover initial non-AI Spine, Atlas caching/navigation, concurrent Lenses, counts, marker spacing, control bounds, Escape focus restoration, fragment caching, toggle caching, source spotlight, trace bounds, related citation navigation, selected-text Explain, saved response reopening, four trace kinds together, keyboard X-Ray, scrolling, five-item Trail size and margin clearance from the Spine. Screenshots were inspected for light, dark, documentation and narrow layouts.
+- **Real Chrome manual acceptance remains incomplete.** Native Chrome was found, including an extension-management page, but Computer Use stopped before interaction because it could not confidently identify the browser URL. No unpacked extension reload, service-worker lifecycle or real-site CSS acceptance is claimed. Prior project notes describe a synthetic real-Gemini check from the earlier iteration; that is historical evidence, not a new result from this pass.
 
 ## Known limitations
 
-- A valid Source ID establishes location, not semantic support. Neither Page Map nor Critical Lens can prove that a generated label or question is justified by its cited paragraph. Critical copy is framed as a question, not a verdict; readers must inspect the original passage.
-- Smart and Critical each sample at most 36 substantial source blocks, truncated per block. A long page may have relevant passages outside that sample. Their caches are tied to the current in-memory Source Map and reset on rebuild.
-- On narrow pages, an open overview may temporarily overlay article text. Dense source-adjacent markers may hide when they cannot be stacked within the viewport. Real Chrome checks should evaluate this on varied pages.
-- Each fresh Lens analysis sends sampled page text to Gemini only after the reader activates it. The key remains in ignored `config.local.js`; do not put it in logs, screenshots, or reports.
+- Valid Source IDs prove navigation targets exist, not that questions are justified. Review real Gemini output against original text during Chrome acceptance.
+- Smart/Critical sample at most 36 substantial blocks, truncated to 700 characters each. Questions may miss unsampled context; empty output is not an endorsement of an article.
+- Open overviews or expanded compact traces can temporarily cover article text on narrow pages. Dense margin items may hide until their source or available space changes. Extremely short viewports below the tested 360 px height can still crowd global Spine points.
+- Dynamic readable-content changes intentionally rebuild the map and clear session traces/caches. Sticky headers, host CSS, SPA behaviour and extension lifecycle remain real-site verification work.
+- Activation sends sampled page text to Gemini. config.local.js remains ignored and must not appear in test assets, screenshots or reports. Local QA uses an allowlisted loopback server and never reads it.
 
 ## Next recommended stage
 
-Reload the unpacked extension in Chrome and manually check a light article, a dark article, a documentation/GitHub-style page, and a narrow window. Exercise Atlas, Smart, Critical, Explain, caching, X-Ray, source navigation, and multiple traces. Review whether each Critical question is genuinely prompted by its cited passage, including a page where zero findings is appropriate. Fix observed issues before adding more AI features.
+Reload the unpacked extension from this inner directory in Chrome. Test an external light article, dark article, documentation/GitHub-style page and narrow window. Exercise all four behaviours, keyboard/escape, marker/trace density, result caching, real Gemini zero results, and each finding's relationship to its cited passage. Fix observed issues before adding more AI features.
 
-For failures, record the page URL, viewport width, relevant Source ID, sanitized page/service-worker console error, and screenshot. Redact credentials and private page text before sharing.
+See tests/README.md for fixtures and README.md for the Chrome checklist. Record URL, viewport, Source ID, sanitized console/service-worker error and screenshot for failures; never include credentials or private text.
 
 ## Git state
 
-- Branch: `main`; base commit before this iteration: `df48395`.
-- This Critical Lens iteration is uncommitted. No reset, cleanup, or commit was performed.
-- `config.local.js` remains ignored and local-only.
+- Branch: main; starting commit for this polish pass: 99f2384.
+- This pass is uncommitted. No reset, cleanup, commit or push was performed.
+- Existing Critical Lens was preserved. Implementation, documentation and test fixtures are reviewable in the working tree.
