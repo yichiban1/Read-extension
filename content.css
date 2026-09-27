@@ -749,64 +749,76 @@
   position: fixed;
   z-index: 2147483647;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px 10px;
+  grid-template-columns: 18px auto 20px;
+  gap: 3px 6px;
   align-items: center;
-  min-width: 172px;
-  max-width: min(280px, calc(100vw - 16px));
-  padding: 8px 9px;
-  border: 1px solid #b9c9c7;
-  border-left: 3px solid #b35f46;
-  border-radius: 2px;
-  background: #f8f5ef;
-  box-shadow: 0 8px 22px rgba(20, 39, 45, 0.18);
-  color: #183b56;
-  font-family: Arial, sans-serif;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 16px));
+  padding: 5px 6px;
+  border: 1px solid #b7cabb;
+  border-radius: 5px;
+  background: #fffdf8;
+  box-shadow: 0 2px 10px rgba(20, 39, 45, 0.12);
+  color: #27694d;
+  font: 12px/1.4 system-ui;
   pointer-events: auto;
 }
 
-.deepread-selection-kicker {
-  grid-column: 1 / -1;
-  color: #608089;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-}
+.deepread-selection-mark { display:grid; place-items:center; width:18px; height:18px; border:1px solid #b7cabb; border-radius:50%; font:650 10px system-ui; }
 
 .deepread-selection-explain {
   justify-self: start;
-  padding: 6px 12px;
-  border: 1px solid #b35f46;
-  border-radius: 2px;
-  background: #b35f46;
-  color: #fffaf3;
-  font: 700 11px/1 Arial, sans-serif;
+  padding: 4px 5px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #27694d;
+  font: 600 12px/1.4 system-ui;
+  white-space: nowrap;
   cursor: pointer;
 }
 
 .deepread-selection-explain:hover,
 .deepread-selection-explain:focus-visible {
-  background: #8f4939;
-  outline: 2px solid rgba(179, 95, 70, 0.24);
+  background: #eaf2eb;
+  outline: 2px solid #27694d80;
   outline-offset: 2px;
 }
 
 .deepread-selection-status {
   grid-column: 1 / -1;
-  color: #674735;
-  font: 600 11px/1.3 system-ui, "Segoe UI", Arial, sans-serif;
+  max-width:190px;
+  color: #4d665b;
+  font: 400 11px/1.4 system-ui;
+  overflow-wrap:anywhere;
 }
 
 #deepread-selection-action.is-loading .deepread-selection-explain {
-  border-color: #8ba5ac;
-  background: #8ba5ac;
+  color: #4d665b;
+  background: transparent;
   cursor: wait;
 }
 
 #deepread-selection-action.is-error .deepread-selection-explain {
-  border-color: #795f54;
-  background: #795f54;
+  color: #795f54;
+  background: #f5efe8;
 }
+
+.deepread-selection-dismiss { width:20px; height:22px; border:0; padding:0; border-radius:3px; background:transparent; color:#4d665b; font:16px system-ui; cursor:pointer; }
+.deepread-selection-dismiss:hover { background:#edf0eb; }
+.deepread-selection-dismiss:focus-visible { outline:2px solid #27694d; outline-offset:2px; }
+#deepread-selection-action::before { content:""; position:absolute; left:50%; top:-6px; width:1px; height:5px; background:#8ba996; }
+#deepread-selection-action[data-placement="above"]::before { top:auto; bottom:-6px; }
+#deepread-selection-action[data-placement="edge"]::before { display:none; }
+#deepread-selection-action[hidden] { display:none !important; }
+#deepread-selection-action.is-edge { box-sizing:border-box; width:14px; max-width:14px; padding:0; display:block; border-radius:3px; }
+#deepread-selection-action.is-edge .deepread-selection-mark,
+#deepread-selection-action.is-edge .deepread-selection-dismiss,
+#deepread-selection-action.is-edge .deepread-selection-status { display:none; }
+#deepread-selection-action.is-edge .deepread-selection-explain { display:block; width:12px; height:24px; padding:0; font-size:0; }
+#deepread-selection-action.is-edge .deepread-selection-explain::after { content:"D"; font:650 10px system-ui; }
+#deepread-selection-action.is-edge.is-loading .deepread-selection-explain::after { content:"…"; }
+#deepread-selection-action.is-edge.is-error .deepread-selection-explain::after { content:"!"; }
 
 #deepread-explanation-card {
   position: fixed;
@@ -815,7 +827,7 @@
   max-height: min(48vh, 450px);
   overflow-y: auto;
   border: 0;
-  border-left: 2px solid #b35f46;
+  border-left: 2px solid #467e5f;
   background: var(--deepread-surface);
   box-shadow: 0 6px 20px rgba(20, 39, 45, 0.15);
   color: #183b56;
@@ -996,3 +1008,29 @@
 @keyframes deepread-flow-reveal { from { opacity:0; } to { opacity:1; } }
 @media(prefers-reduced-motion:reduce) { #deepread-shell .deepread-flow-passage { animation:none; transition:none; } }
 @media(max-width:620px) { #deepread-explanation-card { max-height:40vh; } }
+
+/* Two containers, three reading purposes. Atlas actions remain secondary. */
+#deepread-shell .deepread-guided-entry { border-top:1px solid #d4c6b4; padding-top:7px; }
+#deepread-shell .deepread-atlas-actions-label { display:block; color:var(--deepread-muted); font:9px/1.4 system-ui; letter-spacing:.06em; margin-bottom:3px; }
+#deepread-shell #deepread-flow-action,#deepread-shell #deepread-focus-action { border:0; padding:5px 0; font:500 12px/1.4 system-ui; }
+#deepread-lens-panel .deepread-lens-tabs { flex-direction:column; padding:0; background:transparent; gap:6px; }
+#deepread-lens-panel #deepread-smart-action,#deepread-lens-panel #deepread-critical-action { justify-content:flex-start; min-height:49px; text-align:left; gap:9px; padding:7px 9px; white-space:normal; }
+#deepread-lens-panel #deepread-smart-action { color:var(--deepread-smart); background:#edf4ed80; border-color:transparent; }
+#deepread-lens-panel #deepread-critical-action { color:var(--deepread-critical); border:1px solid #d5c9df; background:transparent; }
+#deepread-lens-panel #deepread-smart-action[aria-selected="true"] { background:#edf4ed; border-color:#c4d8ca; }
+#deepread-lens-panel #deepread-critical-action[aria-selected="true"] { background:#f4eff7; border-color:#baa7cb; }
+.deepread-lens-choice-copy { display:grid; gap:1px; min-width:0; }
+.deepread-lens-choice-copy small { color:var(--deepread-muted); font:400 10px/1.4 system-ui; }
+#deepread-shell[data-focus="active"] .deepread-flow-passage { background:none; border-left-color:#9c573e35; }
+#deepread-shell[data-focus="active"] .deepread-flow-passage button { color:#956854; border-color:#9c573e25; background:#fffdf8e6; }
+#deepread-shell[data-focus="active"] .deepread-flow-passage:focus-within { border-left-color:#9c573e80; }
+#deepread-shell[data-focus="active"] .deepread-spine-list .is-flow-current button { box-shadow:none; }
+#deepread-reading-hint { position:fixed; z-index:8; width:210px; padding:9px 11px; border:1px solid #d4c6b4; border-radius:4px; background:var(--deepread-surface); color:var(--deepread-ink); font:11px/1.5 system-ui; pointer-events:auto; box-shadow:0 2px 10px #203c3410; }
+#deepread-reading-hint > strong { font-size:12px; }
+#deepread-reading-hint > button { position:absolute; right:5px; top:4px; width:22px; height:22px; padding:0; border:0; background:transparent; color:var(--deepread-muted); font:16px system-ui; cursor:pointer; }
+#deepread-reading-hint [role="status"] { display:grid; gap:3px; margin-top:5px; }
+#deepread-reading-hint [role="status"] > span { display:flex; justify-content:space-between; gap:7px; }
+#deepread-reading-hint small { font-size:10px; color:var(--deepread-muted); }
+#deepread-reading-hint .deepread-hint-select { color:var(--deepread-smart); }
+#deepread-selection-action { animation:deepread-flow-reveal 140ms ease-out; }
+@media(prefers-reduced-motion:reduce) { #deepread-selection-action { animation:none; } }

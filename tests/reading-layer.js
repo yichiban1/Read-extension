@@ -63,10 +63,13 @@ globalThis.chrome = { runtime: {
     if (message.type === 'DEEPREAD_GENERATE_PAGE_MAP' && new URLSearchParams(location.search).has('flowzero')) response={ok:true,pageMap:{nodes:[],focusPath:[]}};
     if (message.type === 'DEEPREAD_GENERATE_PAGE_MAP' && new URLSearchParams(location.search).has('flowweak')) response={ok:true,pageMap:{nodes:[],focusPath:[{label:'Original unclassified passage',kind:'possibly illustrative or evidence',sourceIds:[first.id]}]}};
     if (new URLSearchParams(location.search).has('guidederror') && message.type==='DEEPREAD_EXPLAIN_SELECTION' && qaCounts[message.type]===1) response={ok:false,message:'Mocked Explain failure. Try again.'};
+    if (new URLSearchParams(location.search).has('selectionerror') && message.type==='DEEPREAD_EXPLAIN_SELECTION' && qaCounts[message.type]===1) response={ok:false,message:'Mocked selected Explain failure. Try again.'};
     setTimeout(()=>callback(response), (new URLSearchParams(location.search).has('explainrace') || new URLSearchParams(location.search).has('guidedrace')) && message.type==='DEEPREAD_EXPLAIN_SELECTION' ? 1500 : new URLSearchParams(location.search).has('race') && message.type==='DEEPREAD_GENERATE_PAGE_MAP' ? 1800 : message.type==='DEEPREAD_SMART_READING'?380:180);
   }
 } };
-const tick = (ms=280) => new Promise(resolve=>setTimeout(resolve,ms));
+// Timers alone can resolve before scheduled layout in a busy iframe matrix.
+// Keep the existing transition delay, then let queued layout frames settle.
+const tick = (ms=280) => new Promise(resolve=>setTimeout(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)),ms));
 const choose = async (mode, browse = true) => {
   const panel=document.getElementById('deepread-lens-panel');
   if (panel.hidden) document.getElementById('deepread-lens-action').click();
@@ -109,6 +112,12 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     qaToolbarListener({type:'TOGGLE_DEEPREAD_GUIDE'}, {}, () => {});
     lens=document.getElementById('deepread-lens-action'); panel=document.getElementById('deepread-lens-panel'); rail=document.querySelector('.deepread-spine');
     check(document.getElementById('deepread-shell').dataset.mode==='active'&&Object.keys(qaCounts).length===0,'Toolbar message activates mode without AI or popup');
+    if(new URLSearchParams(location.search).has('hierarchyqa')) {
+      const hint=document.getElementById('deepread-reading-hint');
+      check(!!hint && hint.textContent.includes('Select text') && hint.textContent.includes('Understand / Examine') && hint.querySelector('[aria-label="Dismiss reading hint"]'),'First activation gives one small dismissible reading-actions hint');
+      if(view==='light' && !new URLSearchParams(location.search).has('selectionerror')) { await tick(8200); check(!document.getElementById('deepread-reading-hint'),'Hint disappears naturally after its short reading window'); }
+      else { hint.querySelector('button').click(); check(!document.getElementById('deepread-reading-hint'),'Hint can be dismissed without AI or blocking reading'); }
+    }
     qaToolbarListener({type:'TOGGLE_DEEPREAD_GUIDE'}, {}, () => {});
     check(document.getElementById('deepread-shell').dataset.mode==='dormant','Second toolbar message returns to dormant mode');
     document.getElementById('deepread-launcher').click();
@@ -116,6 +125,91 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     check(Math.abs(document.documentElement.clientWidth-snapshot().right-expectedOffset())<2,'Rail uses viewport right offset');
     check(document.querySelectorAll('.deepread-spine > button').length===2 && document.getElementById('deepread-guide').contains(document.getElementById('deepread-focus-action')),'Persistent rail has only Atlas and Lens; Guided Read belongs to Atlas');
     check(DeepReadDebug.snapshot().builds===1 && DeepReadDebug.snapshot().validations===1 && document.querySelectorAll('#deepread-launcher').length===1,'Reactivation validates cached region and does not duplicate UI or rebuild');
+    if(new URLSearchParams(location.search).has('hierarchyqa')) {
+      const params=new URLSearchParams(location.search), guide=document.getElementById('deepread-guide');
+      check(!document.getElementById('deepread-reading-hint'),'Reactivation never repeats the hint in this page session');
+      check(document.querySelectorAll('.deepread-spine > button').length===2 && guide.contains(document.getElementById('deepread-flow-action')) && document.getElementById('deepread-flow-action').textContent==='Show structure on page','Atlas owns task-oriented structure/guide actions without more primary controls');
+      lens.click();
+      check(document.getElementById('deepread-smart-action').textContent.includes('Understand') && document.getElementById('deepread-critical-action').textContent.includes('Questions worth considering') && document.querySelector('.deepread-lens-tabs').getAttribute('aria-orientation')==='vertical','Lens exposes distinct Understand and Examine purposes');
+      document.getElementById('deepread-rail-toggle').click(); document.getElementById('deepread-flow-action').click(); await tick();
+      const savedFlow=readingFlow, item=savedFlow.items[0], fullWash=getComputedStyle(item.element).backgroundImage;
+      followAtlas(); await tick();
+      check(!!focusPath && readingFlow===savedFlow && getComputedStyle(item.element).backgroundImage==='none' && focusElement.classList.contains('deepread-focus-source'),'Guided spotlight takes priority while the structural map remains intact');
+      document.querySelector('.deepread-focus-stop').click(); await tick();
+      check(readingFlow===savedFlow && getComputedStyle(item.element).backgroundImage===fullWash && count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Stopping Guide restores structural emphasis with no new Page Map');
+      const claim=document.getElementById('claim'), originalStyle=claim.getAttribute('style'), sourceId=claim.getAttribute('data-deepread-source-id');
+      claim.scrollIntoView({block:'center',behavior:'instant'}); await tick();
+      const select = (target=claim, pointer=false) => {
+        window.getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange'));
+        if(pointer) target.dispatchEvent(new MouseEvent('mousedown',{button:0,bubbles:true}));
+        const range=document.createRange(); range.selectNodeContents(target); window.getSelection().addRange(range); document.dispatchEvent(new Event('selectionchange'));
+        return range;
+      };
+      const safeAction = () => {
+        const action=document.getElementById('deepread-selection-action');
+        if(!action || action.hidden) return false;
+        const r=action.getBoundingClientRect(), boxes=[...window.getSelection().getRangeAt(0).getClientRects()];
+        return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && !boxes.some(box=>r.left<box.right&&r.right>box.left&&r.top<box.bottom&&r.bottom>box.top);
+      };
+      select(claim,true);
+      check(!document.getElementById('deepread-selection-action'),'Dragging selection does not produce moving action UI');
+      document.dispatchEvent(new MouseEvent('mouseup',{button:0,bubbles:true})); await tick(100);
+      const action=document.getElementById('deepread-selection-action'), button=action.querySelector('.deepread-selection-explain');
+      check(safeAction() && action.querySelector('.deepread-selection-mark').textContent==='D' && button.getAttribute('aria-label').includes('DeepRead') && count('DEEPREAD_EXPLAIN_SELECTION')===0,'Completed selection reveals a recognisable source-adjacent action without covering selected text or sending AI');
+      if(view==='light' && innerWidth>700) {
+        const actionRect=action.getBoundingClientRect(), next=claim.nextElementSibling.getBoundingClientRect();
+        check(!(actionRect.left<next.right && actionRect.right>next.left && actionRect.top<next.bottom && actionRect.bottom>next.top),'Article action also avoids the following paragraph when a free margin exists');
+      }
+      const selected=window.getSelection().toString(); button.focus({preventScroll:true});
+      check(document.activeElement===button && window.getSelection().toString()===selected && getComputedStyle(button).outlineStyle!=='none','Keyboard focus is visible and preserves native text selection');
+      button.click();
+      check(action.dataset.state==='loading' && action.getAttribute('aria-busy')==='true' && button.disabled && count('DEEPREAD_EXPLAIN_SELECTION')===1,'Explain has a calm explicit loading state using the existing request');
+      document.dispatchEvent(new Event('selectionchange'));
+      check(button.disabled && count('DEEPREAD_EXPLAIN_SELECTION')===1,'Repeated same-selection notifications cannot reset loading or duplicate a request');
+      await tick();
+      if(params.has('selectionerror')) {
+        check(action.dataset.state==='error' && !button.disabled && button.textContent==='Try again' && safeAction(),'Error offers a bounded retry on the same selection');
+        button.click(); await tick();
+      }
+      const card=document.getElementById('deepread-explanation-card');
+      check(!!card && card.dataset.state==='success' && card.querySelector('header').textContent.includes('UNDERSTAND') && card.dataset.sourceId===sourceId && qaExplainRequests[0].text===selected && !!qaExplainRequests[0].context,'Success uses the existing source-linked explanation and Understand hierarchy');
+      const oldTabindex=claim.getAttribute('tabindex'); card.querySelector('.deepread-explanation-close').click();
+      check(document.activeElement===claim && readingTrail.some(trace=>trace.kind==='explained'&&trace.sourceId===sourceId),'Closing a selected explanation returns focus to its source and records the existing Trail');
+      claim.blur(); check(claim.getAttribute('tabindex')===oldTabindex,'Temporary source focus attribute is restored on blur');
+      select(); await tick(100); document.querySelector('.deepread-selection-dismiss').click();
+      check(!document.getElementById('deepread-selection-action') && document.activeElement===claim,'Explicit dismiss removes the affordance and returns source focus');
+      document.dispatchEvent(new Event('selectionchange')); await tick(100);
+      check(!document.getElementById('deepread-selection-action'),'A dismissed unchanged selection stays dismissed');
+      select(); await tick(100); document.querySelector('.deepread-selection-explain').focus(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+      check(!document.getElementById('deepread-selection-action') && document.activeElement===claim,'Escape dismisses the keyboard action and returns to the source');
+      // Long selections and both vertical viewport edges use actual Range geometry.
+      const range=select(); await tick(100);
+      const bottom=range.getBoundingClientRect().bottom;
+      window.scrollBy(0,bottom-(innerHeight-18)); await tick(); select(); await tick(100);
+      check(safeAction(),'Selection near the viewport bottom repositions above or into a safe margin');
+      window.scrollBy(0,range.getBoundingClientRect().top-12); await tick(); select(); await tick(100);
+      check(safeAction(),'Selection near the viewport top remains bounded and avoids selected text');
+      claim.style.maxWidth='280px'; window.dispatchEvent(new Event('resize')); await tick(100);
+      check(safeAction() && document.querySelectorAll('#deepread-selection-action').length===1,'Resize remeasures the live Range without duplicate selection components');
+      if(originalStyle===null) claim.removeAttribute('style'); else claim.setAttribute('style',originalStyle);
+      window.dispatchEvent(new Event('resize')); await tick(100);
+      select(mapping().root); await tick(100);
+      check(safeAction(),'Long multi-paragraph selection can use a compact page-edge action');
+      window.dispatchEvent(new Event('scroll')); await tick(100);
+      check(!document.getElementById('deepread-selection-action'),'Scrolling dismisses transient selection UI and scheduled work');
+      select(); await tick(100); claim.append(' A substantive change invalidates selected action geometry.'); await tick(1100);
+      check(!document.getElementById('deepread-selection-action') && !readingFlow,'Source rebuild cancels the selection component and stale structural map');
+      check(claim.getAttribute('tabindex')===oldTabindex,'Source rebuild restores temporary source focus attributes');
+      document.getElementById('deepread-launcher').click(); select(); await tick(100);
+      check(!document.getElementById('deepread-selection-action') && !document.getElementById('deepread-reading-hint') && !DeepReadDebug.snapshot().observersActive,'Dormant mode has no contextual action, hint or reading observers');
+      document.getElementById('deepread-launcher').click(); select(); await tick(100);
+      check(document.querySelectorAll('#deepread-selection-action').length===1 && !document.getElementById('deepread-reading-hint'),'Reactivation restores selection discovery without duplicated UI or repeated hint');
+      document.querySelector('.deepread-selection-dismiss').click();
+      document.getElementById('deepread-launcher').click();
+      check(claim.getAttribute('tabindex')===oldTabindex,'Exit restores temporary source focus attributes');
+      result.textContent=checks.join('\n')+'\nGemini/runtime mocked. Not unpacked Chrome acceptance.';
+      return;
+    }
     if(new URLSearchParams(location.search).has('flowqa')) {
       const params=new URLSearchParams(location.search), action=document.getElementById('deepread-flow-action');
       const guide=document.getElementById('deepread-guide');
@@ -493,7 +587,11 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     }
     result.dataset.diagnostics=JSON.stringify(DeepReadDebug.snapshot());
     result.textContent=checks.join('\n')+'\nRequests: '+JSON.stringify(qaCounts)+'\nGemini/runtime mocked. Not unpacked Chrome acceptance.';
-  } catch(error) { result.textContent=checks.join('\n')+'\nFAILED: '+error.message+'\nRequests: '+JSON.stringify(qaCounts); }
+  } catch(error) {
+    const rect = selector => document.querySelector(selector)?.getBoundingClientRect().toJSON();
+    const action=document.getElementById('deepread-selection-action');
+    result.textContent=checks.join('\n')+'\nFAILED: '+error.message+'\nRequests: '+JSON.stringify(qaCounts)+'\nGeometry: '+JSON.stringify({viewport:[innerWidth,innerHeight],rail:rect('.deepread-spine'),guide:rect('#deepread-guide'),trace:rect('.deepread-source-annotation.is-open .deepread-trace-detail'),action:action&&{hidden:action.hidden,style:action.style.cssText,rect:action.getBoundingClientRect().toJSON()},selectionBounds:window.getSelection().rangeCount?window.getSelection().getRangeAt(0).getBoundingClientRect().toJSON():null});
+  }
 });
 if(new URLSearchParams(location.search).has('autorun')) window.addEventListener('load',()=>document.getElementById('qa-run').click(),{once:true});
 if(new URLSearchParams(location.search).has('demo')) window.addEventListener('load',async()=>{

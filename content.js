@@ -23,6 +23,11 @@ const MAX_READING_TRAIL = 5;
 
 let selectionAction = null;
 let selectionContext = null;
+let selectionPointerDown = false;
+let selectionLayoutFrame = 0;
+let explanationSourceFocus = null;
+let activationHintShown = false;
+let activationHintTimer = null;
 let dismissedSelectionText = "";
 let selectionRequestToken = 0;
 let dynamicRefreshTimer = null;
@@ -75,17 +80,16 @@ function updateLensUI() {
   const loading = context ? smartReadingLoading : activeLensMode === "critical" && criticalLoading;
   const count = context ? smartReadingItems.length : criticalItems.length;
   shell.dataset.lensMode = activeLensMode || "none";
-  const name = context ? "Context Lens" : "Critical Lens";
   action.querySelector(".deepread-lens-symbol").textContent = activeLensMode ? (context ? "✦" : "◇") : "◐";
-  action.querySelector(".deepread-lens-label").textContent = activeLensMode ? name : "Lens";
+  action.querySelector(".deepread-lens-label").textContent = activeLensMode ? `Lens · ${context ? "Understand" : "Examine"}` : "Lens";
   const badge = action.querySelector(".deepread-lens-count");
   badge.hidden = !loaded;
   badge.textContent = loaded ? String(count) : "";
   action.setAttribute("aria-busy", String(Boolean(loading)));
   action.setAttribute("aria-label", activeLensMode
-    ? `${name}${loading ? ", reading" : loaded ? `, ${count} ${context ? "reading aids" : "questions"}` : ""}. Open Lens choices`
+    ? `Lens. ${context ? "Understand with Context" : "Examine with Critical"}${loading ? ", reading" : loaded ? `, ${count} ${context ? "reading aids" : "questions"}` : ""}. Open Lens choices`
     : "Open Lens choices. Context for understanding, Critical for examination");
-  action.title = activeLensMode ? name : "Lens";
+  action.title = activeLensMode ? `Lens · ${context ? "Understand" : "Examine"}` : "Lens · Understand or examine";
   [SMART_ACTION_ID, CRITICAL_ACTION_ID].forEach((id, index) => {
     const button = document.getElementById(id);
     const selected = activeLensMode === (index === 0 ? "context" : "critical");
@@ -102,6 +106,7 @@ function setLensPanelOpen(open, restoreFocus = true) {
   const panel = document.getElementById(LENS_PANEL_ID);
   const action = document.getElementById(LENS_ACTION_ID);
   if (!panel || !action) return;
+  if (open) dismissActivationHint();
   const hadFocus = panel.contains(document.activeElement);
   if (open) focusReadingSurface("lens");
   panel.hidden = !open;
@@ -726,6 +731,7 @@ function buildSourceMapSafely() {
     if (sourceMap && previous === sourceMap) return sourceMap;
     // Explain carries a selected passage and its old source ID too. Cancel it
     // before source IDs can be reused for the changed document.
+    clearExplanationSourceFocus();
     dismissSelectionAction();
     const guide = document.getElementById(GUIDE_ID);
     if (guide) {
@@ -848,24 +854,12 @@ function updateSmartAction() {
   button.classList.toggle("is-loading", smartReadingLoading);
   button.setAttribute("aria-busy", String(smartReadingLoading));
   button.setAttribute("aria-selected", String(activeLensMode === "context"));
-  button.setAttribute("aria-label", smartReadingLoading
-    ? "Context Lens is analysing this article"
-    : active
-      ? `Context Lens active, ${smartReadingItems.length} reading aids. Open overview`
-      : smartReadingLoaded
-        ? "Context Lens inactive. Show cached reading aids"
-        : "Context Lens. Find reading aids near original passages");
-  button.querySelector(".deepread-smart-action-label").textContent =
-    smartReadingLoading ? "Reading…" : "Context Lens";
   const count = button.querySelector(".deepread-smart-action-count");
   count.hidden = !active;
   count.textContent = active ? String(smartReadingItems.length) : "";
-  button.title = active && smartReadingItems.length === 0
-    ? "No extra context suggested · open Context Lens overview"
-    : "Context Lens";
-  button.setAttribute("aria-label", smartReadingLoading ? "Context Lens, analysing" : "Context Lens. Background and clarification");
-  button.querySelector(".deepread-smart-action-label").textContent = "Context";
-  button.title = "Context Lens";
+  button.setAttribute("aria-label", smartReadingLoading ? "Understand. Context is reading this article" : "Understand. Context while reading; background and clarification");
+  button.querySelector(".deepread-smart-action-label").textContent = "Understand";
+  button.title = "Understand · Context while reading";
   updateLensUI();
 }
 
@@ -1127,19 +1121,12 @@ function updateCriticalAction() {
   button.classList.toggle("is-loading", criticalLoading);
   button.setAttribute("aria-busy", String(criticalLoading));
   button.setAttribute("aria-selected", String(activeLensMode === "critical"));
-  button.setAttribute("aria-label", criticalLoading
-    ? "Critical Lens is analysing this article"
-    : active ? `Critical Lens active, ${criticalItems.length} passages to examine. Open overview`
-      : criticalLoaded ? "Critical Lens inactive. Show cached findings"
-        : "Critical Lens. Find passages worth examining more carefully");
-  button.querySelector(".deepread-critical-action-label").textContent =
-    criticalLoading ? "Considering…" : "Critical Lens";
   const count = button.querySelector(".deepread-critical-action-count");
   count.hidden = !active;
   count.textContent = active ? String(criticalItems.length) : "";
-  button.title = active && !criticalItems.length
-    ? "No passages flagged · open Critical Lens overview" : "Critical Lens";
-  button.querySelector(".deepread-critical-action-label").textContent = "Critical";
+  button.title = "Examine · Questions worth considering";
+  button.querySelector(".deepread-critical-action-label").textContent = "Examine";
+  button.setAttribute("aria-label", criticalLoading ? "Examine. Critical is considering this article" : "Examine. Critical questions worth considering");
   updateLensUI();
 }
 
@@ -1395,6 +1382,7 @@ function setGuideExpanded(shell, expanded, restoreFocus = true) {
   guide.inert = !expanded;
 
   if (expanded) {
+    dismissActivationHint();
     focusReadingSurface("atlas");
     void refreshGuide(guide);
   } else {
@@ -1415,6 +1403,37 @@ let readingFlow = null;
 let readingFlowStarting = false;
 let readingFlowToken = 0;
 
+function dismissActivationHint() {
+  clearTimeout(activationHintTimer);
+  activationHintTimer = null;
+  document.getElementById("deepread-reading-hint")?.remove();
+}
+
+function positionActivationHint() {
+  const hint = document.getElementById("deepread-reading-hint");
+  if (hint) placeReadingPanel(hint, getReadingRect(), 12);
+}
+
+function showActivationHint() {
+  if (activationHintShown || !deepReadActive) return;
+  activationHintShown = true;
+  const hint = document.createElement("aside");
+  hint.id = "deepread-reading-hint";
+  hint.setAttribute("aria-label", "DeepRead reading actions");
+  hint.innerHTML = '<strong>DeepRead</strong><button type="button" aria-label="Dismiss reading hint">×</button><div role="status"><span>Atlas <small>Navigate</small></span><span>Lens <small>Understand / Examine</small></span><span class="deepread-hint-select">Select text <small>Explain</small></span></div>';
+  hint.querySelector("button").addEventListener("click", () => {
+    const restore = hint.contains(document.activeElement);
+    dismissActivationHint();
+    if (restore) document.getElementById(RAIL_ID)?.focus({ preventScroll: true });
+  });
+  const expire = () => { if (!hint.contains(document.activeElement)) dismissActivationHint(); };
+  hint.addEventListener("focusin", () => clearTimeout(activationHintTimer));
+  hint.addEventListener("focusout", () => { clearTimeout(activationHintTimer); activationHintTimer = setTimeout(expire, 2000); });
+  document.getElementById(SHELL_ID).append(hint);
+  positionActivationHint();
+  activationHintTimer = setTimeout(expire, 8000);
+}
+
 function readingFlowRole(kind) {
   const role = String(kind || "").trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
   return ({ context: "CONTEXT", background: "CONTEXT", "main claim": "CLAIM", claim: "CLAIM",
@@ -1425,7 +1444,7 @@ function readingFlowRole(kind) {
 function updateReadingFlowAction(message = "") {
   const action = document.getElementById("deepread-flow-action");
   if (!action) return;
-  action.textContent = readingFlowStarting ? "Cancel Reading Flow…" : readingFlow ? "Hide Reading Flow" : "Reveal Reading Flow";
+  action.textContent = readingFlowStarting ? "Cancel showing structure…" : readingFlow ? "Hide structure on page" : "Show structure on page";
   action.setAttribute("aria-pressed", String(Boolean(readingFlow || readingFlowStarting)));
   action.setAttribute("aria-busy", String(readingFlowStarting));
   const status = document.getElementById("deepread-flow-status");
@@ -1512,7 +1531,7 @@ async function toggleReadingFlow() {
   const sourceMap = globalThis.DeepReadSourceMapping?.getCurrentMap?.();
   const token = ++readingFlowToken;
   readingFlowStarting = true;
-  updateReadingFlowAction("Choosing source passages from the shared Page Map…");
+  updateReadingFlowAction("Choosing structural passages…");
   await refreshGuide(guide);
   if (token !== readingFlowToken || !deepReadActive || sourceMap !== globalThis.DeepReadSourceMapping?.getCurrentMap?.()) return;
   readingFlowStarting = false;
@@ -1527,11 +1546,11 @@ async function toggleReadingFlow() {
     used.add(sourceId);
     return { sourceId, sourceElement, label: node.label, role: readingFlowRole(node.kind) };
   }).filter(Boolean).sort((a,b) => order.get(a.sourceId) - order.get(b.sourceId)).slice(0,7);
-  if (!entries.length) return updateReadingFlowAction(cache ? "No structural passages returned. Atlas still links original sources." : "Reading Flow unavailable. Retry or use Atlas's local navigation.");
+  if (!entries.length) return updateReadingFlowAction(cache ? "No structural passages returned. Atlas still links original sources." : "Structure unavailable. Retry or navigate with Atlas.");
   const layer = document.createElement("div");
   layer.id = "deepread-flow-layer";
   layer.setAttribute("role", "group");
-  layer.setAttribute("aria-label", "Reading Flow. Structural passages from Page Map");
+  layer.setAttribute("aria-label", "Atlas structure on page. Original structural passages");
   entries.forEach((item, index) => {
     const element = document.createElement("div");
     element.className = "deepread-flow-passage";
@@ -1590,7 +1609,11 @@ function setDeepReadActive(active) {
     else observeStructureSources(guide, sourceMap);
     startReadingListeners();
     startDynamicRefresh();
+    showActivationHint();
   } else {
+    dismissActivationHint();
+    selectionPointerDown = false;
+    clearExplanationSourceFocus();
     setGuideExpanded(shell, false, false);
     setLensPanelOpen(false, false);
     turnOffLens();
@@ -1801,21 +1824,21 @@ function createDeepReadShell() {
   smartAction.className = "deepread-smart-action";
   smartAction.type = "button";
   smartAction.title = "Context Lens";
-  smartAction.setAttribute("aria-label", "Context Lens. Find reading aids near original passages");
+  smartAction.setAttribute("aria-label", "Understand. Context while reading");
   smartAction.setAttribute("aria-pressed", "false");
   smartAction.setAttribute("aria-expanded", "false");
   smartAction.setAttribute("aria-controls", SMART_OVERVIEW_ID);
-  smartAction.innerHTML = '<span class="deepread-smart-action-symbol" aria-hidden="true">✦</span><span class="deepread-smart-action-label">Context Lens</span><span class="deepread-smart-action-count" hidden></span>';
+  smartAction.innerHTML = '<span class="deepread-smart-action-symbol" aria-hidden="true">✦</span><span class="deepread-lens-choice-copy"><span class="deepread-smart-action-label">Understand</span><small>Context while reading</small></span><span class="deepread-smart-action-count" hidden></span>';
   const criticalAction = document.createElement("button");
   criticalAction.id = CRITICAL_ACTION_ID;
   criticalAction.className = "deepread-critical-action";
   criticalAction.type = "button";
   criticalAction.title = "Critical Lens";
-  criticalAction.setAttribute("aria-label", "Critical Lens. Find passages worth examining more carefully");
+  criticalAction.setAttribute("aria-label", "Examine. Critical questions worth considering");
   criticalAction.setAttribute("aria-pressed", "false");
   criticalAction.setAttribute("aria-expanded", "false");
   criticalAction.setAttribute("aria-controls", CRITICAL_OVERVIEW_ID);
-  criticalAction.innerHTML = '<span class="deepread-critical-action-symbol" aria-hidden="true">◇</span><span class="deepread-critical-action-label">Critical Lens</span><span class="deepread-critical-action-count" hidden></span>';
+  criticalAction.innerHTML = '<span class="deepread-critical-action-symbol" aria-hidden="true">◇</span><span class="deepread-lens-choice-copy"><span class="deepread-critical-action-label">Examine</span><small>Questions worth considering</small></span><span class="deepread-critical-action-count" hidden></span>';
   const lensAction = document.createElement("button");
   lensAction.id = LENS_ACTION_ID;
   lensAction.type = "button";
@@ -1827,7 +1850,7 @@ function createDeepReadShell() {
   lensPanel.id = LENS_PANEL_ID;
   lensPanel.setAttribute("aria-label", "DeepRead Lens");
   lensPanel.hidden = true;
-  lensPanel.innerHTML = '<div class="deepread-lens-heading"><strong>Lens</strong><button type="button" class="deepread-lens-close" aria-label="Close Lens choices">×</button></div><div class="deepread-lens-tabs" role="tablist" aria-label="Lens mode"></div><p class="deepread-lens-intro">Context · Understand<br>Critical · Examine</p><div class="deepread-context-controls" hidden><p>Understand as you read. Hover or focus a green source-edge tick for context.</p><button type="button" class="deepread-context-browse">Browse context</button><button type="button" class="deepread-context-off">Turn off Lens</button></div>';
+  lensPanel.innerHTML = '<div class="deepread-lens-heading"><strong>Lens</strong><button type="button" class="deepread-lens-close" aria-label="Close Lens choices">×</button></div><div class="deepread-lens-tabs" role="tablist" aria-label="Reading purpose" aria-orientation="vertical"></div><p class="deepread-lens-intro">Select a passage to ask for an explanation.</p><div class="deepread-context-controls" hidden><p>Green ticks offer context as you read.</p><button type="button" class="deepread-context-browse">Browse context</button><button type="button" class="deepread-context-off">Turn off Lens</button></div>';
   smartAction.setAttribute("role", "tab");
   criticalAction.setAttribute("role", "tab");
   [smartAction, criticalAction].forEach(action => action.removeAttribute("aria-pressed"));
@@ -1860,7 +1883,7 @@ function createDeepReadShell() {
   smartOverview.hidden = true;
   smartOverview.innerHTML = `
     <div class="deepread-smart-overview-heading">
-      <strong>Context Lens</strong><span class="deepread-smart-overview-count"></span>
+      <strong>UNDERSTAND · CONTEXT</strong><span class="deepread-smart-overview-count"></span>
     </div>
     <ol class="deepread-smart-overview-list"></ol>
     <p class="deepread-smart-overview-empty" hidden>No passage clearly called for an extra reading aid.</p>
@@ -1903,7 +1926,7 @@ function createDeepReadShell() {
   const flowAction = document.createElement("button");
   flowAction.id = "deepread-flow-action";
   flowAction.type = "button";
-  flowAction.textContent = "Reveal Reading Flow";
+  flowAction.textContent = "Show structure on page";
   flowAction.setAttribute("aria-pressed", "false");
   flowAction.setAttribute("aria-controls", "deepread-flow-layer");
   flowAction.addEventListener("click", () => void toggleReadingFlow());
@@ -1911,7 +1934,10 @@ function createDeepReadShell() {
   flowStatus.id = "deepread-flow-status";
   flowStatus.setAttribute("role", "status");
   flowStatus.hidden = true;
-  guidedFooter.append(flowAction, flowStatus);
+  const actionsLabel = document.createElement("small");
+  actionsLabel.className = "deepread-atlas-actions-label";
+  actionsLabel.textContent = "USE THIS MAP";
+  guidedFooter.append(actionsLabel, flowAction, flowStatus);
   guidedFooter.append(focusAction);
   guide.append(guidedFooter);
 
@@ -1926,7 +1952,7 @@ function createDeepReadShell() {
   criticalAction.addEventListener("click", () => activateLensMode("critical"));
   lensPanel.querySelector(".deepread-lens-tabs").addEventListener("keydown", event => {
     const tabs = [smartAction, criticalAction];
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const next = event.key === "Home" ? 0 : event.key === "End" ? 1 : (tabs.indexOf(document.activeElement) + 1) % 2;
     tabs[next].focus();
@@ -2018,14 +2044,87 @@ function getNearbyContext(element, selectedText) {
 }
 
 function getSelectionRect(range) {
+  const boxes = Array.from(range.getClientRects()).filter(rect => rect.width && rect.height)
+    .map(({ left, right, top, bottom }) => ({ left, right, top, bottom }));
+  if (!boxes.length) return null;
+  const selection = window.getSelection();
+  const backwards = selection?.focusNode === range.startContainer && selection?.focusOffset === range.startOffset;
+  const anchor = backwards ? boxes[0] : boxes.at(-1);
   const rect = range.getBoundingClientRect();
-  if (rect.width || rect.height) {
-    return { left: rect.left, top: rect.top, bottom: rect.bottom };
+  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, boxes, anchor };
+}
+
+function positionSelectionAction() {
+  if (!selectionAction || !selectionContext || selectionContext.guided) return;
+  cancelAnimationFrame(selectionLayoutFrame);
+  selectionAction.style.visibility = "hidden";
+  selectionLayoutFrame = requestAnimationFrame(() => {
+    selectionLayoutFrame = 0;
+    const action = selectionAction, context = selectionContext;
+    if (!deepReadActive || !action?.isConnected) return;
+    if (!context?.range?.startContainer.isConnected) return dismissSelectionAction();
+    const rect = getSelectionRect(context.range);
+    if (!rect) return dismissSelectionAction();
+    context.rect = rect;
+    const rail = document.querySelector(".deepread-spine")?.getBoundingClientRect();
+    const right = Math.min(document.documentElement.clientWidth - 8, (rail?.left ?? innerWidth) - 12);
+    const boxes = rect.boxes.filter(box => box.bottom > 0 && box.top < innerHeight);
+    const clear = (x, y, width, height, edge = 8) => x >= edge && x + width <= right && y >= 8 && y + height <= innerHeight - 8 &&
+      !boxes.some(box => x < box.right + 3 && x + width > box.left - 3 && y < box.bottom + 3 && y + height > box.top - 3) &&
+      ![y + 3, y + height - 3].some(py => [x + 2, x + width - 2].some(px => hostOccupiesPoint(px, py)));
+    action.hidden = false;
+    action.classList.remove("is-edge");
+    const width = action.offsetWidth, height = action.offsetHeight;
+    const anchor = rect.anchor;
+    const left = Math.max(8, Math.min(anchor.right - width, right - width));
+    const clampY = y => Math.max(8, Math.min(y, innerHeight - height - 8));
+    const candidates = [
+      { left, top:anchor.bottom + 8, side:"below" }, { left, top:anchor.top - height - 8, side:"above" },
+      { left, top:rect.bottom + 8, side:"below" }, { left, top:rect.top - height - 8, side:"above" },
+      { left:rect.right + 8, top:clampY(anchor.top), side:"edge" },
+      { left:rect.left - width - 8, top:clampY(anchor.top), side:"edge" }
+    ];
+    [32, 64, 96, 128].forEach(offset => candidates.push({ left, top:anchor.bottom + 8 + offset, side:"below" }));
+    let position = candidates.find(p => clear(p.left, p.top, width, height));
+    if (!position) {
+      // A tall/full-width selection may leave only a thin source margin.
+      // Keep a recognisable keyboard action there; never paint over the range.
+      action.classList.add("is-edge");
+      const compactWidth = action.offsetWidth, compactHeight = action.offsetHeight;
+      const top = Math.max(8, Math.min(anchor.top, innerHeight - compactHeight - 8));
+      position = [0, 32, 64, 96, 128].flatMap(offset => [rect.left - compactWidth - 4, rect.right + 4].map(left => ({ left, top:top + offset, side:"edge" })))
+        .find(p => clear(p.left, p.top, compactWidth, compactHeight, 0));
+    }
+    // Completely occupied viewports have no honest non-overlapping placement.
+    action.hidden = !position;
+    if (!position) return;
+    action.dataset.placement = position.side;
+    action.style.left = `${position.left}px`;
+    action.style.top = `${position.top}px`;
+    action.style.visibility = "visible";
+  });
+}
+
+function clearExplanationSourceFocus() {
+  const state = explanationSourceFocus;
+  if (!state) return;
+  explanationSourceFocus = null;
+  state.element.removeEventListener("blur", clearExplanationSourceFocus);
+  if (state.element.getAttribute("tabindex") === "-1") state.element.removeAttribute("tabindex");
+}
+
+function focusExplanationSource(context) {
+  clearExplanationSourceFocus();
+  const element = context?.sourceId && globalThis.DeepReadSourceMapping?.getCurrentMap?.()?.elementsById.get(context.sourceId) || context?.sourceElement;
+  if (!element?.isConnected) return;
+  const previous = element.getAttribute("tabindex");
+  if (previous === null) {
+    element.setAttribute("tabindex", "-1");
+    explanationSourceFocus = { element };
+    element.addEventListener("blur", clearExplanationSourceFocus, { once: true });
   }
-  const firstRect = range.getClientRects()[0];
-  return firstRect
-    ? { left: firstRect.left, top: firstRect.top, bottom: firstRect.bottom }
-    : null;
+  element.focus({ preventScroll: true });
+  if (document.activeElement !== element) clearExplanationSourceFocus();
 }
 
 function positionFloatingElement(element, rect, focus = false) {
@@ -2069,26 +2168,35 @@ function createSelectionAction() {
   const action = document.createElement("div");
   action.id = SELECTION_ACTION_ID;
   action.className = "deepread-selection-action";
-  action.setAttribute("role", "dialog");
-  action.setAttribute("aria-label", "DeepRead selection action");
+  action.setAttribute("role", "group");
+  action.setAttribute("aria-label", "Understand selected text with DeepRead");
+  action.dataset.state = "ready";
   action.innerHTML = `
-    <span class="deepread-selection-kicker">ASK ABOUT SELECTED TEXT</span>
-    <button class="deepread-selection-explain" type="button" aria-label="Explain. Ask about selected text">Explain</button>
-    <small class="deepread-selection-status" hidden></small>
+    <span class="deepread-selection-mark" aria-hidden="true">D</span>
+    <button class="deepread-selection-explain" type="button" aria-label="Explain selected text with DeepRead" title="Explain selected text with DeepRead">Explain</button>
+    <button class="deepread-selection-dismiss" type="button" aria-label="Dismiss selected-text action">×</button>
+    <small class="deepread-selection-status" role="status" aria-live="polite" hidden></small>
   `;
   action.addEventListener("mousedown", (event) => event.preventDefault());
   action.querySelector(".deepread-selection-explain").addEventListener("click", () => {
     void explainSelection();
   });
+  action.querySelector(".deepread-selection-dismiss").addEventListener("click", () => {
+    dismissedSelectionText = selectionContext?.text || "";
+    dismissSelectionAction(true);
+  });
   document.documentElement.appendChild(action);
   return action;
 }
 
-function dismissSelectionAction() {
+function dismissSelectionAction(restoreFocus = false) {
+  const context = selectionContext;
+  cancelAnimationFrame(selectionLayoutFrame); selectionLayoutFrame = 0;
   selectionRequestToken += 1;
   selectionAction?.remove();
   selectionAction = null;
   selectionContext = null;
+  if (restoreFocus && context && !context.guided) focusExplanationSource(context);
   const button = document.querySelector('.deepread-focus-explain');
   if (button) { button.disabled = false; button.textContent = 'Explain this passage'; button.setAttribute('aria-busy', 'false'); }
   const status = document.querySelector('.deepread-focus-explain-status');
@@ -2106,7 +2214,7 @@ function removeExplanationCard(resumeGuided = false) {
     focusPath.steps[focusPath.index]?.sourceId === saved.context.sourceId) {
     showFocusStep(focusPath.index, false);
     document.querySelector('.deepread-focus-explain')?.focus({ preventScroll: true });
-  }
+  } else if (resumeGuided && saved && !saved.context.guided && deepReadActive) focusExplanationSource(saved.context);
   if (!saved?.context?.sourceId) return;
   const sourceElement = globalThis.DeepReadSourceMapping?.getCurrentMap?.()
     ?.elementsById?.get(saved.context.sourceId);
@@ -2390,7 +2498,14 @@ function addReadingTrace({ kind, label, sourceId, sourceIds, sourceElement, mark
 }
 
 function showSelectionAction(text, context, rect) {
+  dismissActivationHint();
+  const sameSelection = selectionAction && selectionContext && !selectionContext.guided && selectionContext.text === text && selectionContext.sourceId === context.sourceId;
   if (selectionContext && (selectionContext.guided || selectionContext.text !== text || selectionContext.sourceId !== context.sourceId)) dismissSelectionAction();
+  if (sameSelection) {
+    selectionContext = { ...context, text, rect };
+    positionSelectionAction();
+    return;
+  }
   removeExplanationCard();
   if (!selectionAction) {
     selectionAction = createSelectionAction();
@@ -2398,12 +2513,15 @@ function showSelectionAction(text, context, rect) {
   selectionContext = { ...context, text, rect };
   selectionAction.dataset.sourceId = context.sourceId || "";
   selectionAction.classList.remove("is-loading", "is-error");
+  selectionAction.dataset.state = "ready";
+  selectionAction.setAttribute("aria-busy", "false");
   const status = selectionAction.querySelector(".deepread-selection-status");
   status.hidden = true;
   const button = selectionAction.querySelector(".deepread-selection-explain");
   button.disabled = false;
   button.textContent = "Explain";
-  positionFloatingElement(selectionAction, rect);
+  button.setAttribute("aria-label", "Explain selected text with DeepRead");
+  positionSelectionAction();
 }
 
 function setSelectionActionStatus(message, state = "") {
@@ -2422,6 +2540,12 @@ function setSelectionActionStatus(message, state = "") {
   status.hidden = false;
   selectionAction.classList.toggle("is-loading", state === "loading");
   selectionAction.classList.toggle("is-error", state === "error");
+  selectionAction.dataset.state = state || "ready";
+  selectionAction.setAttribute("aria-busy", String(state === "loading"));
+  const actionButton = selectionAction.querySelector(".deepread-selection-explain");
+  actionButton.setAttribute("aria-label", state === "error" ? "Retry explanation of selected text with DeepRead" : state === "loading" ? "Explaining selected text with DeepRead" : "Explain selected text with DeepRead");
+  if (state === "error") actionButton.textContent = "Try again";
+  positionSelectionAction();
 }
 
 function isValidExplanation(explanation) {
@@ -2444,7 +2568,7 @@ function showExplanationCard(explanation, context) {
   card.setAttribute("aria-label", "DeepRead explanation");
   card.innerHTML = `
     <header class="deepread-explanation-header">
-      <span>DEEPREAD / EXPLAIN</span>
+      <span>UNDERSTAND · EXPLAIN</span>
       <button class="deepread-explanation-close" type="button" aria-label="Dismiss explanation">×</button>
     </header>
     <section class="deepread-explanation-body">
@@ -2468,13 +2592,14 @@ function showExplanationCard(explanation, context) {
     sourceLink.className = 'deepread-explanation-source';
     sourceLink.textContent = 'Back to passage';
     sourceLink.addEventListener('click', () => {
-      removeExplanationCard(Boolean(context.guided));
+      removeExplanationCard(true);
       globalThis.DeepReadSourceMapping?.scrollToSourceId(context.sourceId);
     });
     footer.append(sourceLink);
   } else footer.textContent = 'AI explanation · source remains on the original page';
   if (context.guided) card.querySelector('.deepread-explanation-close').setAttribute('aria-label', 'Close explanation and continue Guided Read');
   card.dataset.sourceId = context.sourceId || "";
+  card.dataset.state = "success";
   card.querySelector(".deepread-explanation-close").addEventListener("click", () => removeExplanationCard(true));
   document.documentElement.appendChild(card);
   activeExplanation = { explanation, context };
@@ -2532,6 +2657,7 @@ async function explainSelection() {
       setSelectionActionStatus("The AI returned no usable explanation. Nothing was shown.", "error");
       return;
     }
+    if (!context.guided) dismissedSelectionText = context.text;
     dismissSelectionAction();
     showExplanationCard(response.explanation, context);
   } catch (error) {
@@ -2545,7 +2671,7 @@ async function explainSelection() {
 }
 
 function handleSelectionChange() {
-  if (!deepReadActive) return;
+  if (!deepReadActive || selectionPointerDown) return;
   const selection = window.getSelection();
   const text = selection ? selection.toString().trim() : "";
   if (!text) dismissedSelectionText = "";
@@ -2579,11 +2705,14 @@ function handleSelectionChange() {
   showSelectionAction(text, {
     nearbyContext: getNearbyContext(contextElement, text),
     sourceId: mappedSource?.sourceId || null,
+    sourceElement: contextElement,
+    range: range.cloneRange(),
     page: getPageContext()
   }, rect);
 }
 
 function handleDocumentPointerDown(event) {
+  selectionPointerDown = event.button === 0 && !event.target.closest?.(`#${SHELL_ID}, #${SELECTION_ACTION_ID}, #${EXPLANATION_CARD_ID}`);
   const shell = document.getElementById(SHELL_ID);
   if (!event.target.closest?.(`#${LENS_PANEL_ID}, #${LENS_ACTION_ID}`)) setLensPanelOpen(false);
   if (!event.target.closest?.(`#${SMART_OVERVIEW_ID}, #${SMART_ACTION_ID}`)) {
@@ -2608,6 +2737,12 @@ function handleDocumentPointerDown(event) {
     dismissSelectionAction();
   }
   removeExplanationCard();
+}
+
+function handleSelectionPointerUp() {
+  if (!selectionPointerDown) return;
+  selectionPointerDown = false;
+  handleSelectionChange();
 }
 
 function scheduleGuideRefresh(reason = "reading-content") {
@@ -2687,10 +2822,12 @@ function initializeDeepRead() {
 }
 
 function handleReadingKeyDown(event) {
+  selectionPointerDown = false;
   const shell = document.getElementById(SHELL_ID);
   const atlasIsOpen = shell?.classList.contains("deepread-shell--expanded");
 
   if (event.key === "Escape") {
+    dismissActivationHint();
     if (shell?.dataset.detail === "focus") {
       shell.querySelector("#deepread-focus-panel").hidden = true;
       shell.dataset.detail = "none";
@@ -2700,7 +2837,7 @@ function handleReadingKeyDown(event) {
     setCriticalOverviewOpen(false);
     setLensPanelOpen(false);
     dismissedSelectionText = window.getSelection()?.toString().trim() || "";
-    dismissSelectionAction();
+    dismissSelectionAction(true);
     removeExplanationCard(true);
     const focusedTrace = document.activeElement?.closest(".deepread-source-annotation");
     collapseOpenReadingTraces();
@@ -2741,6 +2878,8 @@ function handleReadingResize() {
   positionSourcePeek();
   positionSmartOverview();
   positionFocusPanel();
+  positionSelectionAction();
+  positionActivationHint();
   const card = document.getElementById(EXPLANATION_CARD_ID);
   if (card && activeExplanation) positionExplanationCard(card, activeExplanation.context);
 }
@@ -2754,6 +2893,7 @@ function handleReadingRoute() {
 function startReadingListeners() {
   document.addEventListener("selectionchange", handleSelectionChange);
   document.addEventListener("mousedown", handleDocumentPointerDown, true);
+  document.addEventListener("mouseup", handleSelectionPointerUp);
   document.addEventListener("keydown", handleReadingKeyDown);
   window.addEventListener("scroll", handleReadingScroll, { passive: true });
   window.addEventListener("resize", handleReadingResize, { passive: true });
@@ -2762,6 +2902,7 @@ function startReadingListeners() {
 function stopReadingListeners() {
   document.removeEventListener("selectionchange", handleSelectionChange);
   document.removeEventListener("mousedown", handleDocumentPointerDown, true);
+  document.removeEventListener("mouseup", handleSelectionPointerUp);
   document.removeEventListener("keydown", handleReadingKeyDown);
   window.removeEventListener("scroll", handleReadingScroll);
   window.removeEventListener("resize", handleReadingResize);

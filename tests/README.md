@@ -1,5 +1,15 @@
 # Reading-layer QA
 
+## Product hierarchy pass — 2026-09-27
+
+Use `/matrix?hierarchy=1` for ten focused scenarios: article, GitHub README, wiki, documentation, columns, sticky header, tall passage, 520 × 360, 320 × 480 and selected Explain error/retry. Individual checks use `hierarchyqa=1&autorun=1`, optionally `selectionerror=1`.
+
+These checks cover one-time hint expiry/dismissal, two persistent controls and secondary Atlas actions, Understand/Examine wording, Flow/Guided visual priority without cache loss, completed selection, live Range non-overlap/bounds, keyboard focus, loading/success/error, duplicate-request guards, source focus and temporary tabindex cleanup, explicit dismiss/Escape, long selections, viewport edges, resize, scroll, source rebuild, exit and reactivation. Geometry waits retain the existing timer delay and then wait two animation frames, so scheduled layout finishes before assertions in a busy matrix. Run one matrix at a time and keep its tab active.
+
+Results: both mocked worker suites, syntax/diff checks and all 24 existing + 17 Flow + 5 targeted + 10 hierarchy scenarios passed before delivery. The hierarchy set also covers avoiding the following paragraph when a free margin exists.
+
+Runtime/Gemini remain mocked. Manual in-app selection and screenshots exercise the actual browser selection surface, but do not verify unpacked Chrome or real external-site integration. Reports and screenshots for this pass live in `E:\Deepread-extension\qa-artifacts\product-hierarchy`.
+
 ## Reading Flow pass — 2026-09-27
 
 Use `/matrix?flowmatrix=1` for 17 focused scenarios and `/matrix?targeted=1` for five targeted regressions. The original `/matrix` still runs all 24 scenarios. Individual Flow checks use `/?view=light&flowqa=1&autorun=1`, optionally with `race=1`, `flowzero=1`, `flowweak=1` or `aifailure=1`. `flowcoexist=1&autorun=1` enables Flow during the existing full reading loop.
