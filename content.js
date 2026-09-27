@@ -125,14 +125,68 @@ function positionLensPanel() {
   const action = document.getElementById(LENS_ACTION_ID);
   if (!panel || panel.hidden || !action) return;
   const anchor = action.getBoundingClientRect();
-  const width = Math.min(272, window.innerWidth - 24);
+  const width = Math.min(264, window.innerWidth - 24);
   panel.style.width = `${width}px`;
-  panel.style.left = `${Math.max(12, anchor.left - width - 12)}px`;
-  panel.style.top = `${Math.max(12, Math.min(anchor.top, window.innerHeight - panel.offsetHeight - 12))}px`;
+  placeReadingPanel(panel, getReadingRect(), anchor.top);
+}
+
+function getReadingRect() {
+  return globalThis.DeepReadSourceMapping?.getCurrentMap?.()?.root?.getBoundingClientRect();
+}
+
+// Bounded hit testing, never a body-wide layout scan. Avoid occupied sidebars
+// and fixed/sticky host chrome when choosing a margin or a source-edge tick.
+function hostOccupiesPoint(x, y, sourceElement = null, chromeOnly = false) {
+  const hit = document.elementsFromPoint(x, y).find(element =>
+    !element.closest?.(`#${SHELL_ID}, #${EXPLANATION_CARD_ID}, #${SELECTION_ACTION_ID}`));
+  if (!hit) return false;
+  if (sourceElement?.contains(hit)) return false;
+  let element = hit;
+  for (let depth = 0; element && depth < 6; depth++, element = element.parentElement) {
+    if (["fixed", "sticky"].includes(getComputedStyle(element).position)) return true;
+  }
+  if (chromeOnly) return false;
+  if (sourceElement && hit.contains(sourceElement)) return false;
+  return Boolean(hit !== document.body && hit !== document.documentElement &&
+    !hit.contains(globalThis.DeepReadSourceMapping?.getCurrentMap?.()?.root) && hit.textContent?.trim());
+}
+
+function placeReadingPanel(panel, sourceRect, preferredTop = 12) {
+  const edge = 12, gap = 14;
+  const rail = document.querySelector(`#${SHELL_ID} .deepread-spine`)?.getBoundingClientRect();
+  const right = Math.min(document.documentElement.clientWidth - edge, (rail?.left ?? innerWidth) - gap);
+  panel.style.maxWidth = `${Math.max(80, right - edge)}px`;
+  const width = panel.offsetWidth, height = panel.offsetHeight;
+  const clampTop = top => Math.max(edge, Math.min(top, innerHeight - height - edge));
+  const fallbackLeft = Math.max(edge, right - width);
+  const top = clampTop(preferredTop);
+  const underHostChrome = (x, y) => [y + 8, y + height - 8].some(py =>
+    [x + 8, x + width - 8].some(px => hostOccupiesPoint(px, py, null, true)));
+  const rootRect = getReadingRect();
+  const marginRect = rootRect && sourceRect ? {
+    left: Math.min(rootRect.left, sourceRect.left), right: Math.max(rootRect.right, sourceRect.right)
+  } : sourceRect;
+  const candidates = marginRect ? [marginRect.right + gap, marginRect.left - width - gap] : [];
+  let left = candidates.find(x => x >= edge && x + width <= right &&
+    ![top + 8, top + height / 2, top + height - 8].some(y =>
+      [x + 8, x + width / 2, x + width - 8].some(px => hostOccupiesPoint(px, y))));
+  let nextTop = top;
+  if (left === undefined) {
+    left = fallbackLeft;
+    if (sourceRect && sourceRect.right > left && sourceRect.left < left + width) {
+      if (sourceRect.bottom + gap + height <= innerHeight - edge && sourceRect.bottom >= edge && !underHostChrome(left, sourceRect.bottom + gap)) nextTop = sourceRect.bottom + gap;
+      else if (sourceRect.top - gap - height >= edge && !underHostChrome(left, sourceRect.top - gap - height)) nextTop = sourceRect.top - gap - height;
+      else nextTop = clampTop(innerHeight - height - edge);
+    }
+  }
+  panel.style.right = "auto";
+  panel.style.left = `${left}px`;
+  panel.style.top = `${clampTop(nextTop)}px`;
 }
 
 function focusReadingSurface(kind) {
   const shell = document.getElementById(SHELL_ID);
+  if (selectionContext?.guided && kind !== 'focus' && kind !== 'explain') dismissSelectionAction();
   if (kind !== "lens") setLensPanelOpen(false);
   if (kind !== "atlas" && shell?.classList.contains("deepread-shell--expanded")) setGuideExpanded(shell, false, false);
   if (kind !== "trace") collapseOpenReadingTraces();
@@ -370,9 +424,10 @@ function positionMapNodes(guide) {
   const middleRight = rightEdges[Math.floor(rightEdges.length / 2)] ?? window.innerWidth;
   const rail = shell.querySelector(".deepread-spine").getBoundingClientRect();
   // The rail belongs to the viewport. Article geometry only sizes its inward zone.
-  const atlasWidth = Math.min(264, Math.max(30, rail.left - middleRight - 30));
+  const atlasWidth = Math.min(264, Math.max(200, rail.left - middleRight - 30), Math.max(100, window.innerWidth - 84));
   guide.style.width = `${atlasWidth}px`;
   shell.classList.toggle("deepread-shell--tight", atlasWidth < 154);
+  placeReadingPanel(guide, getReadingRect(), rail.top);
   positionLensSpinePoints(sourceMap, rootTop, rootHeight);
   positionLensPanel();
   scheduleMarginLayout();
@@ -938,12 +993,13 @@ function positionSourceTicks() {
     const rect = item.sourceElement.getBoundingClientRect();
     const slot = slots.get(item.sourceId) || 0;
     slots.set(item.sourceId, slot + 1);
-    const top = rect.top + Math.min(slot * 24, Math.max(0, rect.height - 24));
-    const left = rect.left >= 16 ? rect.left - 15
-      : rect.right + 22 < rail.left - 24 ? rect.right + 6 : null;
+    const top = Math.max(12, rect.top) + Math.min(slot * 24, Math.max(0, rect.height - 24));
+    const left = [rect.left >= 16 ? rect.left - 15 : null,
+      rect.right + 22 < rail.left - 24 ? rect.right + 6 : null]
+      .find(x => x !== null && !hostOccupiesPoint(x + 6, top + 12, item.sourceElement));
     const hasTrace = readingTrail.some(trace => trace.sourceId === item.sourceId && trace.label === item.label &&
       trace.element?.isConnected && !trace.element.hidden);
-    marker.hidden = hasTrace || left === null || rect.bottom <= 0 || top >= window.innerHeight || top < 4 ||
+    marker.hidden = hasTrace || left === undefined || rect.bottom <= top || top >= window.innerHeight - 24 ||
       shell.classList.contains("deepread-shell--expanded");
     if (marker.hidden) return;
     marker.style.left = `${left}px`;
@@ -1405,6 +1461,7 @@ function updateGuidedAction() {
 }
 
 function stopFocusPath(message = "") {
+  if (selectionContext?.guided) dismissSelectionAction();
   focusStartToken++;
   focusStarting = false;
   if (focusElement) globalThis.DeepReadSourceMapping?.clearHighlight?.();
@@ -1420,6 +1477,7 @@ function stopFocusPath(message = "") {
   action?.setAttribute("aria-busy", "false");
   const panel = shell.querySelector("#deepread-focus-panel");
   if (panel) panel.hidden = !message;
+  if (panel) panel.querySelector('.deepread-focus-explain').hidden = true;
   if (message) {
     focusReadingSurface("focus");
     panel.querySelector(".deepread-focus-progress").textContent = message;
@@ -1453,18 +1511,14 @@ function createFocusSequence(cache, sourceMap) {
 function positionFocusPanel() {
   const panel = document.getElementById("deepread-focus-panel");
   if (!panel || panel.hidden) return;
-  panel.style.top = `${Math.max(12, Math.min(window.innerHeight * 0.19, window.innerHeight - panel.offsetHeight - 12))}px`;
-  const rect = panel.getBoundingClientRect();
   const sourceRect = focusElement?.getBoundingClientRect();
-  if (!sourceRect || sourceRect.right <= rect.left || sourceRect.bottom < rect.top || sourceRect.top > rect.bottom) return;
-  // Keep the guided passage readable wherever vertical space allows it.
-  const below = sourceRect.bottom + 14;
-  const above = sourceRect.top - rect.height - 14;
-  if (below + rect.height <= window.innerHeight - 12) panel.style.top = `${below}px`;
-  else if (above >= 12) panel.style.top = `${above}px`;
+  panel.classList.toggle("is-compact", innerWidth <= 620 || Boolean(sourceRect &&
+    sourceRect.height > innerHeight * 0.55 && sourceRect.left < 280 && sourceRect.right > innerWidth - 350));
+  placeReadingPanel(panel, sourceRect, innerHeight * 0.19);
 }
 
 function showFocusStep(index, navigate = true) {
+  if (selectionContext?.guided) dismissSelectionAction();
   const fromAtlasAction = document.activeElement?.id === "deepread-focus-action";
   if (!focusPath || focusPath.sourceMap !== globalThis.DeepReadSourceMapping?.getCurrentMap?.()) return stopFocusPath();
   const step = focusPath.steps[index];
@@ -1489,6 +1543,7 @@ function showFocusStep(index, navigate = true) {
   panel.querySelector(".deepread-focus-label").textContent = step.label;
   panel.querySelector('[data-step="previous"]').disabled = index === 0;
   panel.querySelector('[data-step="next"]').disabled = index === focusPath.steps.length - 1;
+  panel.querySelector('.deepread-focus-explain').hidden = false;
   positionFocusPanel();
   if (fromAtlasAction) (panel.querySelector('[data-step="next"]:not(:disabled)') || panel.querySelector('.deepread-focus-stop')).focus({ preventScroll: true });
 }
@@ -1511,6 +1566,7 @@ async function startFocusPath() {
   panel.querySelector(".deepread-focus-progress").textContent = "Choosing original passages…";
   panel.querySelector(".deepread-focus-label").textContent = "";
   panel.querySelectorAll("button[data-step]").forEach(button => button.disabled = true);
+  panel.querySelector('.deepread-focus-explain').hidden = true;
   const guide = shell.querySelector(`#${GUIDE_ID}`);
   await refreshGuide(guide);
   if (token !== focusStartToken || !deepReadActive) return;
@@ -1562,7 +1618,8 @@ function createDeepReadShell() {
   focusPanel.id = "deepread-focus-panel";
   focusPanel.setAttribute("aria-label", "Guided Read. Follow Atlas");
   focusPanel.hidden = true;
-  focusPanel.innerHTML = '<small>FOLLOW ATLAS</small><strong>Guided Read</strong><p class="deepread-focus-progress" role="status" aria-live="polite"></p><p class="deepread-focus-label"></p><div><button type="button" data-step="previous">Previous</button><button type="button" data-step="next">Next</button><button type="button" class="deepread-focus-stop">Stop</button><button type="button" class="deepread-focus-atlas">Atlas</button></div>';
+  focusPanel.innerHTML = '<small>FOLLOW ATLAS</small><strong>Guided Read</strong><p class="deepread-focus-progress" role="status" aria-live="polite"></p><p class="deepread-focus-label"></p><div><button type="button" data-step="previous">Previous</button><button type="button" data-step="next">Next</button><button type="button" class="deepread-focus-stop">Stop</button><button type="button" class="deepread-focus-atlas">Atlas</button></div><button type="button" class="deepread-focus-explain" hidden>Explain this passage</button><p class="deepread-focus-explain-status" role="status" hidden></p>';
+  focusPanel.querySelector('.deepread-focus-explain').addEventListener('click', () => void explainFocusPassage());
   focusPanel.querySelector('[data-step="previous"]').addEventListener("click", () => { if (focusPath && focusPath.index > 0) showFocusStep(focusPath.index - 1); });
   focusPanel.querySelector('[data-step="next"]').addEventListener("click", () => { if (focusPath && focusPath.index < focusPath.steps.length - 1) showFocusStep(focusPath.index + 1); });
   focusPanel.querySelector('.deepread-focus-stop').addEventListener("click", () => { stopFocusPath(); setGuideExpanded(shell, true); focusAction.focus(); });
@@ -1800,9 +1857,10 @@ function getSelectionRect(range) {
     : null;
 }
 
-function positionFloatingElement(element, rect) {
+function positionFloatingElement(element, rect, focus = false) {
   element.style.visibility = "hidden";
   requestAnimationFrame(() => {
+    if (!element.isConnected) return;
     const width = element.offsetWidth || 280;
     const height = element.offsetHeight || 80;
     const left = Math.min(
@@ -1815,36 +1873,24 @@ function positionFloatingElement(element, rect) {
     element.style.left = `${left}px`;
     element.style.top = `${top}px`;
     element.style.visibility = "visible";
+    if (focus) element.querySelector('.deepread-explanation-close')?.focus({ preventScroll: true });
   });
 }
 
-function positionExplanationCard(card, context) {
+function positionExplanationCard(card, context, focus = false) {
   const sourceElement = context.sourceId &&
     globalThis.DeepReadSourceMapping?.getCurrentMap?.()?.elementsById?.get(context.sourceId);
   const sourceRect = sourceElement?.isConnected ? sourceElement.getBoundingClientRect() : null;
   if (!sourceRect) {
-    positionFloatingElement(card, context.rect);
+    positionFloatingElement(card, context.rect, focus);
     return;
   }
   card.style.visibility = "hidden";
   requestAnimationFrame(() => {
     if (!card.isConnected) return;
-    const width = card.offsetWidth;
-    const height = card.offsetHeight;
-    const zone = getAnnotationZone(sourceRect, width);
-    const rightSpace = zone.width;
-    const leftSpace = sourceRect.left;
-    if (rightSpace < width && leftSpace < width + 12) {
-      positionFloatingElement(card, context.rect);
-      return;
-    }
-    const left = rightSpace >= width
-      ? zone.left
-      : sourceRect.left - width - 8;
-    const top = Math.max(8, Math.min(context.rect.top, window.innerHeight - height - 8));
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
+    placeReadingPanel(card, sourceElement.getBoundingClientRect(), context.rect.top);
     card.style.visibility = "visible";
+    if (focus) card.querySelector('.deepread-explanation-close').focus({ preventScroll: true });
   });
 }
 
@@ -1872,14 +1918,24 @@ function dismissSelectionAction() {
   selectionAction?.remove();
   selectionAction = null;
   selectionContext = null;
+  const button = document.querySelector('.deepread-focus-explain');
+  if (button) { button.disabled = false; button.textContent = 'Explain this passage'; button.setAttribute('aria-busy', 'false'); }
+  const status = document.querySelector('.deepread-focus-explain-status');
+  if (status) status.hidden = true;
 }
 
-function removeExplanationCard() {
+function removeExplanationCard(resumeGuided = false) {
   document.getElementById(EXPLANATION_CARD_ID)?.remove();
   const shell = document.getElementById(SHELL_ID);
   if (shell?.dataset.detail === "explain") shell.dataset.detail = "none";
   const saved = activeExplanation;
   activeExplanation = null;
+  if (resumeGuided && saved?.context?.guided && deepReadActive && focusPath &&
+    focusPath.sourceMap === globalThis.DeepReadSourceMapping?.getCurrentMap?.() &&
+    focusPath.steps[focusPath.index]?.sourceId === saved.context.sourceId) {
+    showFocusStep(focusPath.index, false);
+    document.querySelector('.deepread-focus-explain')?.focus({ preventScroll: true });
+  }
   if (!saved?.context?.sourceId) return;
   const sourceElement = globalThis.DeepReadSourceMapping?.getCurrentMap?.()
     ?.elementsById?.get(saved.context.sourceId);
@@ -1993,6 +2049,8 @@ function positionMarginItems() {
     const detail = note?.querySelector(".deepread-trace-detail");
     if (!detail || note.hidden) return;
     const anchor = note.getBoundingClientRect();
+    const rightBoundary = getAnnotationZone(trace.sourceElement.getBoundingClientRect()).rightBoundary;
+    detail.style.maxWidth = `${Math.max(80, rightBoundary - 8)}px`;
     detail.style.maxHeight = `${Math.min(360, window.innerHeight - 16)}px`;
     const height = detail.offsetHeight;
     const below = anchor.bottom + 5;
@@ -2004,7 +2062,6 @@ function positionMarginItems() {
     detail.style.removeProperty("left");
     detail.style.removeProperty("right");
     const rect = detail.getBoundingClientRect();
-    const rightBoundary = getAnnotationZone(trace.sourceElement.getBoundingClientRect()).rightBoundary;
     const left = Math.max(8, Math.min(rect.left, rightBoundary - rect.width));
     detail.style.left = `${left - anchor.left}px`;
     detail.style.right = "auto";
@@ -2161,6 +2218,7 @@ function addReadingTrace({ kind, label, sourceId, sourceIds, sourceElement, mark
 }
 
 function showSelectionAction(text, context, rect) {
+  if (selectionContext && (selectionContext.guided || selectionContext.text !== text || selectionContext.sourceId !== context.sourceId)) dismissSelectionAction();
   removeExplanationCard();
   if (!selectionAction) {
     selectionAction = createSelectionAction();
@@ -2177,6 +2235,13 @@ function showSelectionAction(text, context, rect) {
 }
 
 function setSelectionActionStatus(message, state = "") {
+  if (selectionContext?.guided) {
+    const status = document.querySelector('.deepread-focus-explain-status');
+    status.textContent = message;
+    status.hidden = false;
+    positionFocusPanel();
+    return;
+  }
   if (!selectionAction) {
     return;
   }
@@ -2224,27 +2289,51 @@ function showExplanationCard(explanation, context) {
     analogy.hidden = false;
     analogy.textContent = `Analogy: ${explanation.analogy.trim()}`;
   }
-  card.querySelector("footer").textContent = context.sourceId
-    ? "Close or continue reading to leave a small trace here"
-    : "AI explanation · source remains on the original page";
+  const footer = card.querySelector('footer');
+  if (context.sourceId) {
+    const sourceLink = document.createElement('button');
+    sourceLink.type = 'button';
+    sourceLink.className = 'deepread-explanation-source';
+    sourceLink.textContent = 'Back to passage';
+    sourceLink.addEventListener('click', () => {
+      removeExplanationCard(Boolean(context.guided));
+      globalThis.DeepReadSourceMapping?.scrollToSourceId(context.sourceId);
+    });
+    footer.append(sourceLink);
+  } else footer.textContent = 'AI explanation · source remains on the original page';
+  if (context.guided) card.querySelector('.deepread-explanation-close').setAttribute('aria-label', 'Close explanation and continue Guided Read');
   card.dataset.sourceId = context.sourceId || "";
-  card.querySelector(".deepread-explanation-close").addEventListener("click", () => removeExplanationCard());
+  card.querySelector(".deepread-explanation-close").addEventListener("click", () => removeExplanationCard(true));
   document.documentElement.appendChild(card);
   activeExplanation = { explanation, context };
   markSourceVisited(context.sourceId);
-  positionExplanationCard(card, context);
+  positionExplanationCard(card, context, true);
+}
+
+async function explainFocusPassage() {
+  if (!deepReadActive || !focusPath || focusPath.sourceMap !== globalThis.DeepReadSourceMapping?.getCurrentMap?.()) return;
+  const sourceId = focusPath.steps[focusPath.index]?.sourceId;
+  const source = focusPath.sourceMap.sources.find(source => source.id === sourceId);
+  const element = focusPath.sourceMap.elementsById.get(sourceId);
+  if (!source || !element?.isConnected) return stopFocusPath('The original passage is no longer available.');
+  dismissSelectionAction();
+  selectionContext = { text: source.text, nearbyContext: getNearbyContext(element, source.text),
+    sourceId, page: getPageContext(), rect: element.getBoundingClientRect(), guided: true };
+  await explainSelection();
 }
 
 async function explainSelection() {
   if (!deepReadActive) return;
-  if (!selectionContext || !selectionAction) {
+  if (!selectionContext || (!selectionAction && !selectionContext.guided)) {
     return;
   }
 
   const context = { ...selectionContext };
   const requestToken = ++selectionRequestToken;
-  const button = selectionAction.querySelector(".deepread-selection-explain");
+  const button = context.guided ? document.querySelector('.deepread-focus-explain') : selectionAction.querySelector(".deepread-selection-explain");
+  const resetButton = () => { button.disabled = false; button.textContent = context.guided ? 'Explain this passage' : 'Explain'; button.setAttribute('aria-busy', 'false'); };
   button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
   button.textContent = "Explaining…";
   setSelectionActionStatus("DeepRead is reading this passage…", "loading");
 
@@ -2262,14 +2351,12 @@ async function explainSelection() {
       return;
     }
     if (!response?.ok) {
-      button.disabled = false;
-      button.textContent = "Explain";
+      resetButton();
       setSelectionActionStatus(response?.message || "No explanation was returned. Nothing was fabricated.", "error");
       return;
     }
     if (!isValidExplanation(response.explanation)) {
-      button.disabled = false;
-      button.textContent = "Explain";
+      resetButton();
       setSelectionActionStatus("The AI returned no usable explanation. Nothing was shown.", "error");
       return;
     }
@@ -2279,8 +2366,7 @@ async function explainSelection() {
     if (requestToken !== selectionRequestToken) {
       return;
     }
-    button.disabled = false;
-    button.textContent = "Explain";
+    resetButton();
     setSelectionActionStatus("DeepRead could not reach the AI provider. Nothing was fabricated.", "error");
     console.warn("DeepRead explanation request failed.", error);
   }
@@ -2292,6 +2378,7 @@ function handleSelectionChange() {
   const text = selection ? selection.toString().trim() : "";
   if (!text) dismissedSelectionText = "";
   if (!selection || selection.isCollapsed || text.replace(/\s/g, "").length < 3 || text === dismissedSelectionText) {
+    if (selectionContext?.guided) return;
     if (!text || text === dismissedSelectionText) {
       dismissSelectionAction();
     }
@@ -2442,7 +2529,7 @@ function handleReadingKeyDown(event) {
     setLensPanelOpen(false);
     dismissedSelectionText = window.getSelection()?.toString().trim() || "";
     dismissSelectionAction();
-    removeExplanationCard();
+    removeExplanationCard(true);
     const focusedTrace = document.activeElement?.closest(".deepread-source-annotation");
     collapseOpenReadingTraces();
     focusedTrace?.querySelector(".deepread-trace-toggle")?.focus({ preventScroll: true });
@@ -2460,13 +2547,21 @@ function handleReadingScroll() {
   setLensPanelOpen(false);
   setSmartOverviewOpen(false);
   setCriticalOverviewOpen(false);
-  dismissSelectionAction();
-  removeExplanationCard();
+  // Guided Explain belongs to the mapped passage, not a transient selection.
+  // Smooth source navigation must not cancel its request or strand the loop.
+  if (!selectionContext?.guided) dismissSelectionAction();
+  if (activeExplanation?.context?.guided) {
+    const card = document.getElementById(EXPLANATION_CARD_ID);
+    if (card) positionExplanationCard(card, activeExplanation.context);
+  } else removeExplanationCard();
   scheduleMarginLayout();
   positionSourcePeek();
   positionFocusPanel();
   const guide = document.getElementById(GUIDE_ID);
-  if (guide) updateActiveStructureNode(guide);
+  if (guide) {
+    updateActiveStructureNode(guide);
+    if (guide.closest(`#${SHELL_ID}`).classList.contains('deepread-shell--expanded')) scheduleMapLayout();
+  }
 }
 function handleReadingResize() {
   scheduleMapLayout();
@@ -2474,6 +2569,8 @@ function handleReadingResize() {
   positionSourcePeek();
   positionSmartOverview();
   positionFocusPanel();
+  const card = document.getElementById(EXPLANATION_CARD_ID);
+  if (card && activeExplanation) positionExplanationCard(card, activeExplanation.context);
 }
 function handleReadingRoute() {
   const nextLocation = `${location.pathname}${location.search}`;

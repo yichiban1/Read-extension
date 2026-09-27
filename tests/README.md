@@ -8,9 +8,13 @@ node tests/entry-and-structure.test.cjs
 python tests/preview-server.py
 ```
 
-Open `http://127.0.0.1:8765/matrix` for the existing twenty scenarios with up to four synthetic frames at once. Standard frames are 1280 × 800; wide uses 1920 × 800 and narrow 520 × 360. Each reports PASS/FAIL and its actual check count. Counts are regression evidence, not a product score.
+Open `http://127.0.0.1:8765/matrix` for 24 scenarios with up to four synthetic frames at once. Standard frames are 1280 × 800; wide uses 1920 × 800, narrow 520 × 360 and narrow320 320 × 480. Each reports PASS/FAIL and its actual check count. Counts are regression evidence, not a product score.
 
 Individual fixtures use `/?view=<family>&autorun=1`. Families: light, dark, docs, wide, slim, short, sticky, table, fallback, zero, hierarchy, github, wiki, columns, cards, inferred, coverage, shadow. `/narrow` provides a narrow child viewport. Add `race=1` to the light fixture for pending-response reuse/cancellation, `explainrace=1` for a pending Explain across a source rebuild, or `aifailure=1` for local Atlas navigation before and after provider failure. Reload before rerunning. Omit autorun for manual exploration; atlasdemo=1, focusdemo=1 and demo=1 show explicitly mocked Atlas, Guided Read and ambient Context states.
+
+Finishing fixtures add tall (full-width long passage), longoutline (50 added headings) and clutter (fixed host sidebars). `guidedrace=1` checks delayed Guided Explain after stepping, Escape, exit/reactivation and source rebuild. `guidederror=1` checks failure/retry through the same request path. The normal flow checks exact mapped passage/Source ID payloads, one request per action, scroll persistence, source navigation, bounded card placement, Close/Escape return, restored keyboard focus and subsequent Previous/Next; existing selected-text Explain still runs separately. Tests select a visible Context tick rather than requiring the first tick to cover occupied host content. Width tests restore the fixture's original width, preserving the tall layout.
+
+The 320 × 480 scenario reproduces a compact Trace detail overflowing its rail boundary because the previous CSS width did not account for scrollbar space. Detail width now clamps to the measured rail boundary before height/position measurement. The same check covers Context/Critical detail and saved Explain/Trail interactions without a separate fixture family.
 
 Existing Lens, Explain, source ticks, related citations, detail priority, Trail, source hierarchy, coverage, shadow/slotted anchors and guided-cache regressions remain. This pass updates hierarchy and adds targeted checks:
 
@@ -24,7 +28,7 @@ Existing Lens, Explain, source ticks, related citations, detail priority, Trail,
 
 Sanitized fixture diagnostics are stored in `#qa-result`'s `data-diagnostics` attribute after standard completion. The developer helper `DeepReadDebug.snapshot()` is also available in the content-script execution context. It returns only aggregate timings/counts/coverage/fallback/rebuild reason and runtime state. No automatic console output or page text/title/URL/key.
 
-Verification for this pass, 2026-09-27: mocked worker contracts and syntax/manifest/whitespace checks passed. The final matrix passed all twenty existing scenarios, including keyboard transfer, generic text shrinking and preformatted whitespace. After the final Explain invalidation guard, the complete light reading flow and the targeted source-renumbering race also passed. The failed-provider fixture passed. Only the Codex in-app browser was available; no unpacked Chrome or real external-site extension acceptance. Current performance samples are small synthetic documents, not cross-site benchmarks.
+Verification for this finishing pass, 2026-09-27: both mocked worker contracts and the 24-scenario matrix passed. Guided Explain failure/retry and delayed responses after stepping, Escape, exit/reactivation and source rebuild passed. After the explanation focus fix, the full light reading flow passed, including scroll persistence, original source navigation and existing selected Explain/lifecycle/invalidation regressions. Manual in-app clicks verified Explain → Close → Next and focus transfer after the card became visible. Only the Codex in-app browser was available; no unpacked Chrome or real external-site extension acceptance, and no real Gemini call. Geometry point checks are heuristics, not a cross-site performance or obstruction guarantee.
 
 Optional real provider check:
 
