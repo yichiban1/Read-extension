@@ -17,6 +17,7 @@ if (view === 'github') { article.className='markdown-body'; article.insertAdjace
 if (view === 'columns') { article.style.columns='2'; article.style.columnGap='40px'; }
 if (view === 'tall') { document.getElementById('claim').textContent = Array(12).fill(sampleA).join(' '); article.style.maxWidth='none'; article.parentElement.style.maxWidth='none'; }
 if (view === 'longoutline') article.insertAdjacentHTML('beforeend', Array.from({length:50},(_,i)=>`<h2>Research section ${i+1}</h2><p>${sampleB}</p>`).join(''));
+if (view === 'long') article.insertAdjacentHTML('beforeend', Array.from({length:80},(_,i)=>`<p>Original research passage ${i+1}. ${sampleB}</p>`).join(''));
 if (view === 'clutter') {
   article.style.maxWidth='640px'; article.parentElement.style.marginLeft='260px';
   document.body.insertAdjacentHTML('beforeend','<aside style="position:fixed;left:0;top:0;bottom:0;width:230px;background:#e7eae8;padding:12px;box-sizing:border-box">Host navigation and research cards</aside><aside style="position:fixed;right:0;top:0;bottom:0;width:230px;background:#e7eae8;padding:12px;box-sizing:border-box">Host related research sidebar</aside>');
@@ -59,6 +60,8 @@ globalThis.chrome = { runtime: {
     else if (message.type === 'DEEPREAD_GENERATE_PAGE_MAP') response = { ok:true, pageMap:{nodes:(sources.filter(s=>/^h[1-6]$/.test(s.tag)).length>=2 ? sources.filter(s=>/^h[1-6]$/.test(s.tag)) : sources.filter(s=>s.text.length>=36).slice(0,5)).map(s=>({label:s.text.slice(0,70),kind:'CONTEXT',sourceIds:[s.id]})), focusPath:sources.filter(s=>!/^h[1-6]$/.test(s.tag)&&s.text.length>=36).slice(0,5).map((s,i)=>({label:'Read original passage '+(i+1),kind:['CONTEXT','CLAIM','EVIDENCE','CONTRAST','CONCLUSION'][i],sourceIds:[s.id]}))} };
     else response = { ok:true, explanation:{plainLanguage:'The proposal expects the trees to help, but the strongest promised outcome depends on conditions.', context:'This passage introduces the plan and its expected effect.', analogy:'Think of the model as a weather forecast with assumptions.'} };
     if (new URLSearchParams(location.search).has('aifailure')) response={ok:false,message:'Mocked provider unavailable; local navigation remains available.'};
+    if (message.type === 'DEEPREAD_GENERATE_PAGE_MAP' && new URLSearchParams(location.search).has('flowzero')) response={ok:true,pageMap:{nodes:[],focusPath:[]}};
+    if (message.type === 'DEEPREAD_GENERATE_PAGE_MAP' && new URLSearchParams(location.search).has('flowweak')) response={ok:true,pageMap:{nodes:[],focusPath:[{label:'Original unclassified passage',kind:'possibly illustrative or evidence',sourceIds:[first.id]}]}};
     if (new URLSearchParams(location.search).has('guidederror') && message.type==='DEEPREAD_EXPLAIN_SELECTION' && qaCounts[message.type]===1) response={ok:false,message:'Mocked Explain failure. Try again.'};
     setTimeout(()=>callback(response), (new URLSearchParams(location.search).has('explainrace') || new URLSearchParams(location.search).has('guidedrace')) && message.type==='DEEPREAD_EXPLAIN_SELECTION' ? 1500 : new URLSearchParams(location.search).has('race') && message.type==='DEEPREAD_GENERATE_PAGE_MAP' ? 1800 : message.type==='DEEPREAD_SMART_READING'?380:180);
   }
@@ -113,6 +116,75 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     check(Math.abs(document.documentElement.clientWidth-snapshot().right-expectedOffset())<2,'Rail uses viewport right offset');
     check(document.querySelectorAll('.deepread-spine > button').length===2 && document.getElementById('deepread-guide').contains(document.getElementById('deepread-focus-action')),'Persistent rail has only Atlas and Lens; Guided Read belongs to Atlas');
     check(DeepReadDebug.snapshot().builds===1 && DeepReadDebug.snapshot().validations===1 && document.querySelectorAll('#deepread-launcher').length===1,'Reactivation validates cached region and does not duplicate UI or rebuild');
+    if(new URLSearchParams(location.search).has('flowqa')) {
+      const params=new URLSearchParams(location.search), action=document.getElementById('deepread-flow-action');
+      const guide=document.getElementById('deepread-guide');
+      check(guide.contains(action) && !document.getElementById('deepread-flow-layer'),'Reading Flow lives in Atlas and is initially off');
+      check(readingFlowRole('main claim')==='CLAIM' && readingFlowRole('thesis')==='CLAIM' && readingFlowRole('counterpoint')==='COUNTERPOINT' && readingFlowRole('contrast')==='KEY PASSAGE' && readingFlowRole('not evidence')==='KEY PASSAGE','Role normalisation uses exact supported meanings, never substring inference');
+      const builds=DeepReadDebug.snapshot().builds;
+      document.getElementById('deepread-rail-toggle').click(); action.click();
+      if(params.has('race')) document.getElementById('deepread-focus-action').click();
+      check(count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Atlas and Flow (and pending Guided Read) share one provider request');
+      await tick(params.has('race')?1950:320);
+      if(params.has('aifailure') || params.has('flowzero')) {
+        check(!readingFlow && !readingFlowStarting && !document.getElementById('deepread-flow-layer') && action.getAttribute('aria-pressed')==='false' && !document.getElementById('deepread-flow-status').hidden,'Failed or empty AI structure produces an honest status and no invented markers');
+        if(params.has('flowzero')) { action.click(); await tick(); check(count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Empty Page Map is cached instead of repeating analysis'); }
+        check(guide._deepreadNodes.length>0,'Local Atlas remains usable with zero/error structure');
+      } else {
+        const flow=readingFlow, map=mapping();
+        check(!!flow && flow.sourceMap===map && flow.items.length>0 && flow.items.length<=7,'Flow shows only a bounded set of live AI source passages');
+        check(flow.items.every(item=>map.elementsById.get(item.sourceId)===item.sourceElement && item.element.dataset.sourceId===item.sourceId),'Every marker uses its exact cited Source ID and Element');
+        check(DeepReadDebug.snapshot().builds===builds,'Overlay activation does not rebuild or duplicate source analysis');
+        if(params.has('flowweak')) check(flow.items.length===1 && flow.items[0].role==='KEY PASSAGE','Ambiguous returned role stays generic even without structural nodes');
+        const item=flow.items[0], sourceStyle=item.sourceElement.getAttribute('style');
+        item.sourceElement.scrollIntoView({block:'center',behavior:'instant'}); await tick();
+        const button=item.element.querySelector('button');
+        check(!item.element.hidden && !button.hidden && button.getAttribute('aria-label').includes(item.label),'Visible source has a keyboard button with role and source label');
+        button.focus({preventScroll:true}); button.click(); await tick();
+        check(item.sourceElement.classList.contains('deepread-source-highlight'),'Marker navigates to and emphasises the original source');
+        const markers=flow.items.filter(item=>!item.element.hidden).map(item=>item.element.querySelector('button')).filter(button=>!button.hidden);
+        check(markers.every(button=>{const r=button.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;}),'Visible Flow labels stay bounded at this viewport');
+        if(innerWidth<=620) check(markers.every(button=>button.classList.contains('is-compact')),'Narrow viewport uses small numbered markers');
+        if(view==='tall') { window.scrollBy(0,160); await tick(); check(!item.element.hidden && item.element.getBoundingClientRect().top>=11,'Tall passage marker follows its visible portion'); }
+        check(item.sourceElement.getAttribute('style')===sourceStyle && !item.sourceElement.classList.contains('deepread-flow-source'),'Flow never modifies host style or adds permanent source classes');
+        action.click();
+        check(!readingFlow && !document.getElementById('deepread-flow-layer') && !document.querySelector('.is-flow-current'),'Off removes treatments, buttons/listeners and Spine emphasis');
+        action.click(); await tick();
+        check(!!readingFlow && count('DEEPREAD_GENERATE_PAGE_MAP')===1 && document.querySelectorAll('#deepread-flow-layer').length===1,'Re-enable reuses cache and creates exactly one layer');
+        location.hash='measurement'; await tick();
+        check(!!readingFlow && readingFlow.sourceMap===map && count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Hash navigation preserves structural annotations and cache');
+        if(!params.has('flowweak')) { followAtlas(); await tick(); check(!!focusPath && count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Guided Read still consumes the same cached path with Flow on'); }
+        document.getElementById('claim').append(' A substantive revision removes stale structural annotations.'); await tick(1100);
+        check(!readingFlow && !document.getElementById('deepread-flow-layer') && mapping()!==map,'Content rebuild clears all stale annotations using existing invalidation');
+        action.click(); await tick(params.has('race')?1950:320);
+        check(!!readingFlow && readingFlow.sourceMap===mapping(),'Flow can use a fresh map after source rebuild');
+        const clone=mapping().root.cloneNode(true); mapping().root.replaceWith(clone); await tick(1100);
+        check(!readingFlow && !document.getElementById('deepread-flow-layer'),'Reading root replacement removes old markers');
+        action.click(); await tick(params.has('race')?1950:320);
+        history.replaceState({},'',location.pathname+location.search+'&flowroute=1'); window.dispatchEvent(new PopStateEvent('popstate'));
+        check(!readingFlow && !document.getElementById('deepread-flow-layer'),'Route invalidation immediately removes Flow even when text remains the same');
+        await tick(1100); action.click(); await tick(params.has('race')?1950:320);
+        document.getElementById('deepread-launcher').click();
+        check(!readingFlow && !readingFlowStarting && !document.getElementById('deepread-flow-layer') && !DeepReadDebug.snapshot().observersActive,'Exit removes Flow and keeps dormant observers disconnected');
+        document.getElementById('deepread-launcher').click();
+        check(!readingFlow,'Reactivation does not silently restore Flow');
+        if(params.has('race')) {
+          document.getElementById('claim').append(' New pending map revision.'); await tick(1100);
+          action.click(); action.click(); await tick(1950);
+          check(!readingFlow && !readingFlowStarting,'Turning off during pending request prevents late overlay creation');
+          action.click(); await tick(); check(!!readingFlow,'Cancelled pending result remains reusable in shared cache');
+          document.getElementById('claim').append(' Invalidate before pending result.'); await tick(1100);
+          action.click(); document.getElementById('claim').append(' Another real revision.'); await tick(2100);
+          check(!readingFlow && !readingFlowStarting && !guide._deepreadPageMapCache,'Rebuild rejects a stale pending Flow result');
+          action.click(); document.getElementById('deepread-launcher').click(); await tick(1950);
+          check(!readingFlow && !readingFlowStarting && !document.getElementById('deepread-flow-layer') && !DeepReadDebug.snapshot().observersActive,'Exit during pending Flow prevents late overlays and observers');
+        }
+      }
+      if(deepReadActive) document.getElementById('deepread-launcher').click();
+      check(!document.getElementById('deepread-flow-layer') && !DeepReadDebug.snapshot().observersActive,'All Flow scenarios finish cleanly dormant');
+      result.textContent=checks.join('\n')+'\nGemini/runtime mocked. Not unpacked Chrome acceptance.';
+      return;
+    }
     if (new URLSearchParams(location.search).has('guidedrace') || new URLSearchParams(location.search).has('guidederror')) {
       followAtlas(); await tick();
       const guided = document.getElementById('deepread-focus-panel'), action = guided.querySelector('.deepread-focus-explain');
@@ -257,6 +329,10 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     if(view==='longoutline') check(document.querySelector('.deepread-structure-list').scrollHeight>document.querySelector('.deepread-structure-list').clientHeight && document.querySelectorAll('.deepread-structure-button').length>50,'Long hierarchy remains complete in an independently scrollable outline');
     document.querySelector('.deepread-structure-button').click(); await tick();
     check(!!document.querySelector('.deepread-source-annotation[data-kind="atlas"]'),'Atlas follows source and leaves a trace');
+    if(new URLSearchParams(location.search).has('flowcoexist')) {
+      document.getElementById('deepread-flow-action').click(); await tick();
+      check(!!readingFlow && count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Reading Flow joins the complete regression loop using cached Atlas');
+    }
     if(view!=='zero') {
       await choose('critical');
       const points=[...document.querySelectorAll('.deepread-spine-point,.deepread-critical-spine-point')].map(e=>e.getBoundingClientRect()).sort((a,b)=>a.top-b.top);

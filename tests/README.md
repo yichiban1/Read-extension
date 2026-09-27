@@ -1,5 +1,15 @@
 # Reading-layer QA
 
+## Reading Flow pass — 2026-09-27
+
+Use `/matrix?flowmatrix=1` for 17 focused scenarios and `/matrix?targeted=1` for five targeted regressions. The original `/matrix` still runs all 24 scenarios. Individual Flow checks use `/?view=light&flowqa=1&autorun=1`, optionally with `race=1`, `flowzero=1`, `flowweak=1` or `aifailure=1`. `flowcoexist=1&autorun=1` enables Flow during the existing full reading loop.
+
+Flow fixtures cover normal/dark articles, long text, long outlines, GitHub/wiki, columns, sticky chrome, 520px/320px windows, tall passages, occupied margins, open shadow roots, zero/ambiguous structure, provider failure and delayed Page Map sharing. Assertions check exact Source IDs/live elements, conservative roles, one shared request, cache reuse (including empty responses), unchanged host styles, keyboard names/focus/navigation, bounds, Guided reuse, on/off, hash retention, route/content/root invalidation, late responses and dormant cleanup. The targeted set checks the complete reading loop with Flow active, Guided Explain cancellation/retry, selected Explain invalidation and provider failure.
+
+Results: 24/24 existing, 17/17 Flow and 5/5 targeted scenarios passed in the Codex in-app browser; both mocked worker contracts and syntax/diff checks also passed. OFF/ON screenshots and sanitized matrix reports are in `E:\Deepread-extension\qa-artifacts\reading-flow`. No real Gemini call, controllable Chrome, unpacked-extension reload or external-site injection was verified. Synthetic role labels intentionally test frontend handling; they do not establish semantic quality.
+
+## Existing QA
+
 The browser fixtures load actual source-mapping.js, content.js and content.css. Runtime and Gemini responses are mocked. Fixtures and worker contracts never read config.local.js or contact the provider. Keep these separate from unpacked Chrome and external-site acceptance.
 
 ```powershell
