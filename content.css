@@ -925,8 +925,8 @@
 #deepread-shell[data-mode="active"] #deepread-launcher { top:auto; bottom:18px; border-color:var(--deepread-accent); }
 #deepread-launcher:focus-visible { outline:2px solid var(--deepread-accent); outline-offset:3px; }
 #deepread-shell[data-mode="active"] .deepread-spine-list::before { border-color:var(--deepread-accent); }
-#deepread-focus-action { position:absolute; top:-110px; right:0; width:30px; height:30px; padding:0; border:1px solid #c8b8a8; border-radius:50%; background:var(--deepread-surface); color:var(--deepread-accent); font:700 18px system-ui; pointer-events:auto; cursor:pointer; }
-#deepread-focus-action[aria-pressed="true"] { background:#f0e3d4; outline:2px solid #9c573e50; }
+#deepread-focus-action { position:static; width:100%; padding:8px 0; border:0; border-top:1px solid #d4c6b4; border-radius:0; text-align:left; background:transparent; color:var(--deepread-accent); font:500 12px system-ui; pointer-events:auto; cursor:pointer; }
+#deepread-focus-action:focus-visible { outline:2px solid var(--deepread-accent); outline-offset:2px; }
 #deepread-focus-panel { position:fixed; right:calc(var(--deepread-spine-right) + 50px); top:max(12px,19vh); width:min(260px,calc(100vw - 84px)); max-height:calc(100vh - 24px); overflow:auto; padding:14px; border:1px solid #cfbba8; border-left:3px solid var(--deepread-accent); border-radius:6px; background:var(--deepread-surface); box-shadow:0 4px 18px #203c3418; color:var(--deepread-ink); pointer-events:auto; font:12px/1.5 system-ui; }
 #deepread-focus-panel[hidden] { display:none; }
 #deepread-focus-panel p { margin:8px 0; color:var(--deepread-muted); }
@@ -936,12 +936,12 @@
 #deepread-focus-panel button:disabled { opacity:.45; cursor:default; }
 .deepread-focus-source { outline:2px solid #9c573e80 !important; outline-offset:5px; background-color:#b78b4220 !important; border-radius:2px; scroll-margin-top:100px; }
 /* Atlas is a scrollable hierarchy. Spine alone carries global coordinates. */
-#deepread-shell #deepread-guide { width:min(264px,calc(100vw - 84px)) !important; height:min(62vh,calc(100vh - 132px)); background:var(--deepread-surface); border:1px solid #d4c6b4; border-left:2px solid var(--deepread-accent); border-radius:5px; padding:12px; box-shadow:0 3px 14px #203c3414; pointer-events:auto; }
+#deepread-shell #deepread-guide { display:flex; flex-direction:column; width:min(264px,calc(100vw - 84px)) !important; height:min(62vh,calc(100vh - 132px)); background:var(--deepread-surface); border:1px solid #d4c6b4; border-left:2px solid var(--deepread-accent); border-radius:5px; padding:12px; box-shadow:0 3px 14px #203c3414; pointer-events:auto; }
 #deepread-shell:not(.deepread-shell--atlas-open) #deepread-guide { pointer-events:none; }
 #deepread-shell #deepread-guide::before { display:none; }
 #deepread-shell .deepread-atlas-heading { position:static; display:flex; justify-content:space-between; font-size:10px; padding:0 0 6px; }
 #deepread-shell .deepread-structure-count { position:static; display:block; padding:0 0 6px; }
-#deepread-shell .deepread-structure-list { position:static; height:calc(100% - 100px); overflow:auto; margin:0; padding:0; pointer-events:auto; }
+#deepread-shell .deepread-structure-list { position:static; flex:1; min-height:24px; height:auto; overflow:auto; margin:0; padding:0; pointer-events:auto; }
 #deepread-shell .deepread-structure-item[data-lane] { position:relative; transform:none; top:auto; right:auto; margin:0; padding-left:calc(min(var(--outline-depth),4) * 12px); width:100%; }
 #deepread-shell .deepread-structure-item::after { display:none; }
 #deepread-shell .deepread-structure-button { flex-direction:row; text-align:left; width:100%; min-height:42px; padding:7px 3px; background:transparent; border:0; gap:6px; border-bottom:1px solid #d4c6b450; }
@@ -956,3 +956,10 @@
   #deepread-shell .deepread-spine { top:118px; height:calc(100vh - 144px); }
   #deepread-shell #deepread-guide { top:118px; height:calc(100vh - 144px); }
 }
+.deepread-guided-entry { flex-shrink:0; margin-top:8px; }
+#deepread-focus-panel > small { display:block; color:var(--deepread-accent); font:10px/1.5 system-ui; margin-bottom:4px; }
+#deepread-shell .deepread-context-controls p,
+#deepread-shell .deepread-critical-purpose { font:12px/1.5 system-ui; color:var(--deepread-muted); margin:10px 0; }
+#deepread-shell .deepread-context-controls button { padding:6px 8px; margin:0 6px 8px 0; border:1px solid #b7c2b8; border-radius:3px; background:transparent; color:var(--deepread-ink); font:12px system-ui; cursor:pointer; }
+#deepread-shell .deepread-source-tick[data-mode="context"] span { width:1.5px; height:13px; opacity:.7; box-shadow:none; }
+#deepread-xray-label[data-mode="context"] { box-shadow:0 1px 5px #203c3410; border-left-width:1px; }

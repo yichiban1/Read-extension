@@ -1,5 +1,5 @@
 """Loopback QA server with an explicit allowlist; never serves local config."""
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -15,6 +15,10 @@ FILES = {
 }
 
 class Handler(BaseHTTPRequestHandler):
+    def log_message(self, _format, *args):
+        # Keep QA output quiet and avoid printing request URLs.
+        pass
+
     def do_GET(self):
         entry = FILES.get(urlsplit(self.path).path)
         if not entry:
@@ -29,4 +33,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     print('Mocked reading-layer preview: http://127.0.0.1:8765', flush=True)
-    HTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
+    # Browsers can preconnect without sending a request. A single-threaded
+    # server would let that idle socket block all concurrent fixture assets.
+    ThreadingHTTPServer(('127.0.0.1', 8765), Handler).serve_forever()

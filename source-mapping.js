@@ -516,7 +516,7 @@
       })) {
       currentMap.coverage = region.coverage ?? 1;
       currentMap.usefulTextLength = region.usefulTextLength ?? region.textLength;
-      currentMap.openShadowRoots = queryDeep(document.body, "*").filter(element => element.shadowRoot && !isExcludedRegionRoot(element)).map(element => element.shadowRoot);
+      currentMap.openShadowRoots = getReadingShadowRoots();
       return currentMap;
     }
     clearHighlight();
@@ -546,13 +546,70 @@
       fallbackReason: region.fallbackReason || null,
       coverage: region.coverage ?? 1,
       usefulTextLength: region.usefulTextLength ?? region.textLength,
-      openShadowRoots: queryDeep(document.body, "*").filter(element => element.shadowRoot && !isExcludedRegionRoot(element)).map(element => element.shadowRoot)
+      openShadowRoots: []
     };
+    currentMap.openShadowRoots = getReadingShadowRoots();
     return currentMap;
   }
 
   function getCurrentMap() {
     return currentMap;
+  }
+
+  // Reactivation checks only the cached reading region, without re-running
+  // the body-wide candidate scoring and coverage calculation.
+  function isCurrentMapValid() {
+    if (!currentMap?.root?.isConnected) return false;
+    metricsCache = new WeakMap();
+    const elements = collectReadableElements(currentMap.root, true);
+    return elements.length === currentMap.sources.length && elements.every((element, index) => {
+      const source = currentMap.sources[index];
+      return currentMap.elementsById.get(source.id) === element && source.text === getSourceText(element) &&
+        source.level === (getHeadingLevel(element) || 0);
+    });
+  }
+
+  function containsComposed(root, element) {
+    for (let current = element; current; current = composedParent(current)) if (current === root) return true;
+    return false;
+  }
+
+  function getReadingShadowRoots() {
+    const root = currentMap?.root;
+    if (!root?.isConnected) return [];
+    const hosts = [root, ...queryDeep(root, "*")];
+    return hosts.filter(element => element.shadowRoot && !isExcludedFromRoot(element, root)).map(element => element.shadowRoot);
+  }
+
+  function isRelevantMutation(mutation) {
+    const root = currentMap?.root;
+    if (!root?.isConnected) return true; // Ancestor sentinel detected replacement.
+    const target = mutation.target.nodeType === Node.ELEMENT_NODE ? mutation.target : mutation.target.parentElement;
+    if (!target || !containsComposed(root, target) || isExcludedFromRoot(target, root)) return false;
+    for (let element = target; element && element !== root; element = composedParent(element)) {
+      // Live UI (including clocks/counters) isn't reading material. Do not
+      // ignore numerical prose or table values just because they are numbers.
+      if (element.matches('button, input, select, textarea, time, [role="timer"], [role="status"], [aria-live]')) return false;
+    }
+    if (mutation.type === "attributes") return true; // Explicit structural attribute filter at caller.
+    if (mutation.type === "characterData") {
+      const inCode = Boolean(target.closest("pre"));
+      if (inCode ? mutation.oldValue === mutation.target.textContent :
+          normalizeText(mutation.oldValue) === normalizeText(mutation.target.textContent)) return false;
+      return Boolean(target.closest(SOURCE_SELECTOR) || target.closest(`[${SOURCE_ATTRIBUTE}]`) ||
+        getSourceText(target).length >= MIN_GENERIC_DIRECT_TEXT_CHARS);
+    }
+    const mapped = previousMappedElements;
+    return [...mutation.addedNodes, ...mutation.removedNodes].some(node => {
+      if (node.nodeType === Node.TEXT_NODE) return normalizeText(node.textContent).length > 0 &&
+        (target.matches(SOURCE_SELECTOR) || target.closest(`[${SOURCE_ATTRIBUTE}]`) || getSourceText(target).length >= MIN_GENERIC_DIRECT_TEXT_CHARS);
+      if (node.nodeType !== Node.ELEMENT_NODE || hasExcludedMarker(node) ||
+          node.matches('button, input, select, textarea, time, [role="timer"], [role="status"], [aria-live]')) return false;
+      if (mapped.some(element => node === element || containsComposed(node, element))) return true;
+      if (node.matches(SOURCE_SELECTOR) && getSourceText(node).length > 0) return true;
+      return queryDeep(node, SOURCE_SELECTOR).some(element => !isExcludedFromRoot(element, node) && getSourceText(element).length > 0) ||
+        (node.matches(GENERIC_SELECTOR) && getSourceText(node).length >= MIN_GENERIC_TEXT_CHARS);
+    });
   }
 
   function scrollToSourceId(sourceId) {
@@ -581,6 +638,9 @@
   globalThis.DeepReadSourceMapping = Object.freeze({
     buildSourceMap,
     getCurrentMap,
+    isCurrentMapValid,
+    getReadingShadowRoots,
+    isRelevantMutation,
     scrollToSourceId,
     clearHighlight
   });

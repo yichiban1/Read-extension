@@ -50,15 +50,25 @@ globalThis.chrome = { runtime: {
     })) } };
     else if (message.type === 'DEEPREAD_GENERATE_PAGE_MAP') response = { ok:true, pageMap:{nodes:(sources.filter(s=>/^h[1-6]$/.test(s.tag)).length>=2 ? sources.filter(s=>/^h[1-6]$/.test(s.tag)) : sources.filter(s=>s.text.length>=36).slice(0,5)).map(s=>({label:s.text.slice(0,70),kind:'CONTEXT',sourceIds:[s.id]})), focusPath:sources.filter(s=>!/^h[1-6]$/.test(s.tag)&&s.text.length>=36).slice(0,5).map((s,i)=>({label:'Read original passage '+(i+1),kind:['CONTEXT','CLAIM','EVIDENCE','CONTRAST','CONCLUSION'][i],sourceIds:[s.id]}))} };
     else response = { ok:true, explanation:{plainLanguage:'The proposal expects the trees to help, but the strongest promised outcome depends on conditions.', context:'This passage introduces the plan and its expected effect.', analogy:'Think of the model as a weather forecast with assumptions.'} };
-    setTimeout(()=>callback(response), new URLSearchParams(location.search).has('race') && message.type==='DEEPREAD_GENERATE_PAGE_MAP' ? 1800 : message.type==='DEEPREAD_SMART_READING'?380:180);
+    if (new URLSearchParams(location.search).has('aifailure')) response={ok:false,message:'Mocked provider unavailable; local navigation remains available.'};
+    setTimeout(()=>callback(response), new URLSearchParams(location.search).has('explainrace') && message.type==='DEEPREAD_EXPLAIN_SELECTION' ? 1500 : new URLSearchParams(location.search).has('race') && message.type==='DEEPREAD_GENERATE_PAGE_MAP' ? 1800 : message.type==='DEEPREAD_SMART_READING'?380:180);
   }
 } };
 const tick = (ms=280) => new Promise(resolve=>setTimeout(resolve,ms));
-const choose = async mode => {
+const choose = async (mode, browse = true) => {
   const panel=document.getElementById('deepread-lens-panel');
   if (panel.hidden) document.getElementById('deepread-lens-action').click();
   document.getElementById(mode==='context'?'deepread-smart-action':'deepread-critical-action').click();
   await tick();
+  if (mode==='context' && browse) {
+    document.getElementById('deepread-lens-action').click();
+    document.querySelector('.deepread-context-browse').click();
+  }
+};
+const followAtlas = () => {
+  const shell=document.getElementById('deepread-shell');
+  if (!shell.classList.contains('deepread-shell--expanded')) document.getElementById('deepread-rail-toggle').click();
+  document.getElementById('deepread-focus-action').click();
 };
 const selectExplain = async () => {
   const paragraph=document.getElementById('claim');
@@ -74,39 +84,69 @@ document.getElementById('qa-run').addEventListener('click', async () => {
   const checks=[];
   const check=(condition,label)=>{ checks.push(`${condition?'PASS':'FAIL'} ${label}`); if(!condition) throw new Error(label); };
   const mapping=()=>globalThis.DeepReadSourceMapping.getCurrentMap();
-  const lens=document.getElementById('deepread-lens-action');
-  const panel=document.getElementById('deepread-lens-panel');
-  const rail=document.querySelector('.deepread-spine');
+  let lens, panel, rail;
   const snapshot=()=>rail.getBoundingClientRect();
   const expectedOffset=()=>Math.min(28,Math.max(16,innerWidth*.02));
   const count=type=>qaCounts[type]||0;
   try {
-    check(document.getElementById('deepread-shell').dataset.mode==='dormant' && document.querySelector('.deepread-spine').inert && Object.keys(qaCounts).length===0,'Dormant mode exposes only the tiny launcher without AI');
+    check(document.getElementById('deepread-shell').dataset.mode==='dormant' && !document.querySelector('.deepread-spine') && !mapping() && !DeepReadDebug.snapshot().observersActive && Object.keys(qaCounts).length===0,'Dormant load creates only launcher: no map, reading UI, observers or AI');
+    const dormantRange=document.createRange(); dormantRange.selectNodeContents(document.getElementById('claim'));
+    window.getSelection().addRange(dormantRange); document.dispatchEvent(new Event('selectionchange')); await tick(30);
+    check(!document.getElementById('deepread-selection-action'),'Dormant selection leaves normal webpage selection alone');
+    window.getSelection().removeAllRanges();
     qaToolbarListener({type:'TOGGLE_DEEPREAD_GUIDE'}, {}, () => {});
+    lens=document.getElementById('deepread-lens-action'); panel=document.getElementById('deepread-lens-panel'); rail=document.querySelector('.deepread-spine');
     check(document.getElementById('deepread-shell').dataset.mode==='active'&&Object.keys(qaCounts).length===0,'Toolbar message activates mode without AI or popup');
     qaToolbarListener({type:'TOGGLE_DEEPREAD_GUIDE'}, {}, () => {});
     check(document.getElementById('deepread-shell').dataset.mode==='dormant','Second toolbar message returns to dormant mode');
     document.getElementById('deepread-launcher').click();
     check(document.getElementById('deepread-shell').dataset.mode==='active' && !document.querySelector('.deepread-spine').inert,'One launcher click activates the reading layer');
     check(Math.abs(document.documentElement.clientWidth-snapshot().right-expectedOffset())<2,'Rail uses viewport right offset');
-    check(document.querySelectorAll('.deepread-spine > button').length===3,'Atlas, Lens and Focus Path share the persistent rail');
+    check(document.querySelectorAll('.deepread-spine > button').length===2 && document.getElementById('deepread-guide').contains(document.getElementById('deepread-focus-action')),'Persistent rail has only Atlas and Lens; Guided Read belongs to Atlas');
+    check(DeepReadDebug.snapshot().builds===1 && DeepReadDebug.snapshot().validations===1 && document.querySelectorAll('#deepread-launcher').length===1,'Reactivation validates cached region and does not duplicate UI or rebuild');
+    if(new URLSearchParams(location.search).has('aifailure')) {
+      const local=document.getElementById('deepread-guide')._deepreadNodes.map(node=>node.label);
+      document.getElementById('deepread-rail-toggle').click();
+      check(local.length>0 && document.querySelectorAll('.deepread-structure-button').length===local.length,'Atlas opens immediately with local navigation before a provider response');
+      await tick();
+      check(!document.getElementById('deepread-guide')._deepreadPageMapCache && !document.querySelector('.deepread-structure-error').hidden && document.getElementById('deepread-guide')._deepreadNodes.map(node=>node.label).join()===local.join(),'Provider failure preserves every original heading and local anchor');
+      document.querySelector('.deepread-structure-button').click();
+      check(!!document.querySelector('.deepread-source-highlight'),'Local source navigation works after provider failure');
+      result.textContent=checks.join('\n')+'\nGemini/runtime mocked. Not unpacked Chrome acceptance.';
+      return;
+    }
+    if(new URLSearchParams(location.search).has('explainrace')) {
+      const originalMap=mapping(), paragraph=document.getElementById('claim');
+      paragraph.scrollIntoView({block:'center',behavior:'instant'}); await tick();
+      const range=document.createRange(); range.selectNodeContents(paragraph); window.getSelection().removeAllRanges(); window.getSelection().addRange(range); document.dispatchEvent(new Event('selectionchange'));
+      document.querySelector('.deepread-selection-explain').click();
+      const newPassage=document.createElement('p'); newPassage.textContent='New original evidence was inserted before the selected passage while its explanation was pending.'; paragraph.before(newPassage);
+      await tick(1100);
+      check(mapping()!==originalMap && (!selectionAction || (selectionContext?.sourceId===paragraph.getAttribute('data-deepread-source-id') && !selectionAction.querySelector('button').disabled)),'Changed source IDs cancel the pending request; any renewed selection uses the current anchor');
+      await tick(600);
+      check(!document.getElementById('deepread-explanation-card') && count('DEEPREAD_EXPLAIN_SELECTION')===1,'Late Explain cannot attach an outdated answer to a rebuilt source map');
+      document.getElementById('deepread-launcher').click();
+      result.textContent=checks.join('\n')+'\nGemini/runtime mocked. Not unpacked Chrome acceptance.';
+      return;
+    }
     if(new URLSearchParams(location.search).has('race')) {
       const focusButton=document.getElementById('deepread-focus-action');
       const atlasButton=document.getElementById('deepread-rail-toggle');
       atlasButton.click();
+      check(document.querySelectorAll('.deepread-structure-button').length>0 && !document.getElementById('deepread-guide')._deepreadPageMapCache,'Local Atlas is visible while delayed AI enrichment is pending');
       const bannerUpdate=document.createElement("div");bannerUpdate.textContent="Unrelated short update";document.body.append(bannerUpdate);await tick(50);
       focusButton.click();
       check(count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Cold Focus and Atlas share a single pending request');
       document.getElementById('deepread-launcher').click(); await tick(1950);
       check(!focusPath&&document.getElementById('deepread-shell').dataset.mode==='dormant','Late response cannot reactivate a dismissed guided mode');
-      document.getElementById('deepread-launcher').click(); focusButton.click(); await tick();
+      document.getElementById('deepread-launcher').click(); followAtlas(); await tick();
       check(!!focusPath&&count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Restart uses cached response from the dismissed pending request');
       document.querySelector('.deepread-focus-stop').click();
       check(!focusPath&&!document.querySelector('.deepread-focus-source'),'Stop removes the path and spotlight');
       document.getElementById('claim').append(' A genuine revision must invalidate this cached path.'); await tick(1100);
-      focusButton.click(); document.getElementById('claim').append(' Another revision arrives while the request is pending.'); await tick(2100);
+      followAtlas(); document.getElementById('claim').append(' Another revision arrives while the request is pending.'); await tick(2100);
       check(!focusPath&&!document.getElementById('deepread-guide')._deepreadPageMapCache,'Source changes discard a stale in-flight path response');
-      focusButton.click(); await tick(1950);
+      followAtlas(); await tick(1950);
       check(!!focusPath&&count('DEEPREAD_GENERATE_PAGE_MAP')===3,'Changed content can start a fresh valid path');
       result.textContent=checks.join('\n')+'\nRequests: '+JSON.stringify(qaCounts)+'\nGemini/runtime mocked. Not unpacked Chrome acceptance.';
       return;
@@ -149,7 +189,15 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     check(count('DEEPREAD_SMART_READING')===1 && count('DEEPREAD_CRITICAL_READING')===1,'Each mode requests once during quick switching');
     check(document.getElementById('deepread-shell').dataset.lensMode==='critical' && document.querySelectorAll('.deepread-smart-spine-point').length===0 && document.querySelectorAll('.deepread-source-tick[data-mode="context"]').length===0,'Late Context response does not reactivate hidden mode');
     check(lens.querySelector('.deepread-lens-count').textContent===(view==='zero'?'0':'3'),'Active mode count includes valid zero');
-    await choose('context'); await choose('critical');
+    await choose('context', false);
+    check(panel.hidden && document.getElementById('deepread-smart-overview').hidden && !document.querySelector('.deepread-smart-spine-point'),'Context restores ambient ticks without forcing an overview');
+    if(view!=='zero') {
+      mapping().elementsById.get(smartReadingItems[0].sourceId).scrollIntoView({block:'center',behavior:'instant'}); await tick();
+      const contextTick=document.querySelector('.deepread-source-tick[data-mode="context"] button');
+      contextTick.focus();
+      check(document.querySelector('#deepread-xray-label .deepread-xray-excerpt')?.textContent===smartReadingItems[0].hint && !document.querySelector('.deepread-source-peek'),'Context focus immediately reveals comprehension aid without a heavy source outline');
+    }
+    await choose('critical');
     if(panel.hidden) lens.click();
     const panelRect=panel.getBoundingClientRect();
     const overviewRect=document.getElementById('deepread-critical-overview').getBoundingClientRect();
@@ -168,6 +216,7 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     const atlas=document.getElementById('deepread-rail-toggle'); atlas.click(); await tick();
     atlas.click(); atlas.click();
     check(count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Atlas reuses Page Map');
+    await tick(); // Measure after the existing 190 ms Atlas transition settles.
     const guide=document.getElementById('deepread-guide').getBoundingClientRect();
     check(guide.right<=snapshot().left && Math.abs(snapshot().left-guide.right-20)<2,'Atlas grows inward from the same rail');
     document.querySelector('.deepread-structure-button').click(); await tick();
@@ -212,8 +261,12 @@ document.getElementById('qa-run').addEventListener('click', async () => {
       await choose('critical'); window.dispatchEvent(new Event('scroll'));
       check(panel.hidden,'Continuing to read closes Lens details');
       const focusAction=document.getElementById('deepread-focus-action');
-      focusAction.click(); await tick();
+      followAtlas();
       const focusPanel=document.getElementById('deepread-focus-panel');
+      // Other concurrent matrix frames can take browser focus during an await.
+      // Check this transfer synchronously in the frame that initiated it.
+      check(focusPanel.contains(document.activeElement),'Starting Guided Read moves keyboard focus from the hidden Atlas action to visible controls');
+      await tick();
       check(!!focusPath && !focusPanel.hidden && focusPath.steps.length>=2 && focusPath.steps.length<=5,'Focus Path creates a short sequence of original passages');
       check(count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Focus reuses the cached Atlas request');
       const firstFocus=focusPath.steps[0].sourceId;
@@ -229,15 +282,17 @@ document.getElementById('qa-run').addEventListener('click', async () => {
       const focusRect=focusPanel.getBoundingClientRect();
       check(focusRect.left>=10&&focusRect.right<snapshot().left&&focusRect.bottom<=innerHeight-10,'Focus surface fits inward of the rail at this viewport');
       document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
-      check(!!focusPath&&focusPanel.hidden&&document.activeElement===focusAction,'Escape dismisses the guide surface and preserves resumable progress');
-      focusAction.click(); await tick();
+      check(!!focusPath&&focusPanel.hidden&&document.activeElement===atlas,'Escape dismisses guided controls and returns to Atlas while preserving progress');
+      followAtlas(); await tick();
       await selectExplain();
       check(!!focusPath && !!document.getElementById('deepread-explanation-card') && focusPanel.hidden,'Explain takes detail priority while the guided sequence survives');
-      focusAction.click(); await tick();
+      followAtlas(); await tick();
       check(!document.getElementById('deepread-explanation-card') && !focusPanel.hidden && count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Focus resumes without another request or floating explanation');
       const beforeUnrelated=mapping();
+      const buildsBeforeUnrelated=DeepReadDebug.snapshot().builds;
       const unrelated=document.createElement('div'); unrelated.textContent='Unmapped short UI'; document.body.append(unrelated); await tick(1100);
       check(mapping()===beforeUnrelated&&!!focusPath&&count('DEEPREAD_GENERATE_PAGE_MAP')===1,'Unrelated DOM updates preserve the same Source Map and path');
+      check(DeepReadDebug.snapshot().builds===buildsBeforeUnrelated,'Unrelated outside-region update triggers no expensive map build');
       unrelated.remove(); await tick(1000);
       if(view==='inferred') {
         const guide=document.getElementById('deepread-guide');
@@ -249,7 +304,7 @@ document.getElementById('qa-run').addEventListener('click', async () => {
       if(view==='shadow') {
         const old=mapping(); old.elementsById.get(old.sources.find(source=>source.text.startsWith('The open component')).id).append(' New substantive evidence has been added.'); await tick(1100);
         check(mapping()!==old&&!focusPath,'Open shadow text changes safely reset guided reading');
-        focusAction.click(); await tick();
+        followAtlas(); await tick();
       }
       // Mutation rebuild should invalidate map caches, not silently reuse old findings.
       const oldMap=mapping(); const claim=document.getElementById('claim'); claim.append(' The draft has now been revised to record an additional condition.');
@@ -260,13 +315,55 @@ document.getElementById('qa-run').addEventListener('click', async () => {
       atlas.click(); await tick(); check(count('DEEPREAD_GENERATE_PAGE_MAP')===(view==='shadow'?3:2),'Changed Source Map refreshes Atlas');
       atlas.click();
     }
+    if(view==='cards') {
+      const previous=mapping(); document.getElementById('claim').firstChild.nodeValue='Short'; await tick(1100);
+      check(mapping()!==previous && !mapping().sources.some(source=>source.text.startsWith('The council expects')),'A mapped generic source shrinking below its threshold still invalidates anchors');
+    }
+    if(view==='github') {
+      const previous=mapping(); const code=[...document.querySelectorAll('article pre')].find(element=>element.textContent.includes('mode')); code.firstChild.nodeValue=code.textContent.replace('mode','  mode'); await tick(1100);
+      check(mapping()!==previous,'Meaningful whitespace inside preformatted code invalidates its source');
+    }
     document.getElementById('deepread-launcher').click();
     check(document.getElementById('deepread-shell').dataset.mode==='dormant'&&document.querySelector('.deepread-spine').inert,'Exit restores dormant state with controls inert');
+    check(!DeepReadDebug.snapshot().observersActive && DeepReadDebug.snapshot().observedShadowRoots===0 && !focusPath && !document.querySelector('.deepread-source-tick'),'Exit disconnects observers and removes guided state and Lens markers');
+    const exitRange=document.createRange(); exitRange.selectNodeContents(document.getElementById('claim')); window.getSelection().removeAllRanges(); window.getSelection().addRange(exitRange); document.dispatchEvent(new Event('selectionchange')); await tick(30);
+    check(!document.getElementById('deepread-selection-action'),'Selection after exit cannot reopen Explain');
+    if(view==='light') {
+      const dormantMap=mapping(), buildCount=DeepReadDebug.snapshot().builds;
+      document.getElementById('claim').append(' This passage was revised while reading mode was dormant.'); await tick(1100);
+      check(mapping()===dormantMap && DeepReadDebug.snapshot().builds===buildCount,'Dormant content changes do not trigger background rebuilds');
+      document.getElementById('deepread-launcher').click();
+      check(mapping()!==dormantMap && DeepReadDebug.snapshot().builds===buildCount+1,'Reactivation detects substantive dormant revisions');
+      const stableMap=mapping(), stableBuilds=DeepReadDebug.snapshot().builds;
+      const widget=document.createElement('div'); widget.innerHTML='<button>Refresh</button><time>10:00</time><span role="status">0</span>'; document.querySelector('article').append(widget);
+      for(let i=0;i<5;i++) {widget.querySelector('button').textContent='Refresh '+i;widget.querySelector('time').textContent='10:0'+i;widget.querySelector('[role="status"]').textContent=String(i);document.getElementById('claim').style.opacity=String(.9+i*.01);document.getElementById('claim').classList.toggle('qa-style');}
+      await tick(1100);
+      check(mapping()===stableMap && DeepReadDebug.snapshot().builds===stableBuilds,'Buttons, live counters, clocks and class/style churn cause zero rebuilds');
+      widget.remove(); await tick(1000);
+      const batchBuilds=DeepReadDebug.snapshot().builds;
+      for(let i=0;i<4;i++) document.getElementById('claim').append(' Substantive revision '+i+'.'); await tick(1100);
+      check(DeepReadDebug.snapshot().builds===batchBuilds+1 && mapping()!==stableMap,'A batch of substantive source edits performs one debounced rebuild');
+      const replacedMap=mapping(); const replacement=document.querySelector('article').cloneNode(true); document.querySelector('article').replaceWith(replacement); await tick(1100);
+      check(mapping()!==replacedMap && mapping().root.isConnected && DeepReadDebug.snapshot().reason==='reading-root-replaced','SPA reading-root replacement rebuilds live anchors through shallow ancestor observation');
+      const hashMap=mapping(), hashBuilds=DeepReadDebug.snapshot().builds;
+      location.hash='claim'; window.dispatchEvent(new PopStateEvent('popstate')); await tick(1000);
+      check(mapping()===hashMap && DeepReadDebug.snapshot().builds===hashBuilds,'Hash-only route events do not rebuild document structure');
+      const target=new URL(location.href); target.searchParams.set('qa-route','next'); history.pushState({},'',target); window.dispatchEvent(new PopStateEvent('popstate')); await tick(1100);
+      check(DeepReadDebug.snapshot().reason==='route-change' && DeepReadDebug.snapshot().builds===hashBuilds+1,'Path/search route change validates mapping without fabricating a new source map');
+      window.getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange')); await tick(30);
+      const pendingRange=document.createRange(); pendingRange.selectNodeContents(document.getElementById('claim')); window.getSelection().addRange(pendingRange); document.dispatchEvent(new Event('selectionchange'));
+      document.querySelector('.deepread-selection-explain').click();
+      document.getElementById('deepread-launcher').click();
+      await tick();
+      check(!document.getElementById('deepread-explanation-card') && !document.getElementById('deepread-selection-action') && !DeepReadDebug.snapshot().observersActive,'A late Explain response cannot reopen UI or observers after exit');
+    }
+    result.dataset.diagnostics=JSON.stringify(DeepReadDebug.snapshot());
     result.textContent=checks.join('\n')+'\nRequests: '+JSON.stringify(qaCounts)+'\nGemini/runtime mocked. Not unpacked Chrome acceptance.';
   } catch(error) { result.textContent=checks.join('\n')+'\nFAILED: '+error.message+'\nRequests: '+JSON.stringify(qaCounts); }
 });
 if(new URLSearchParams(location.search).has('autorun')) window.addEventListener('load',()=>document.getElementById('qa-run').click(),{once:true});
 if(new URLSearchParams(location.search).has('demo')) window.addEventListener('load',async()=>{
+  document.getElementById('deepread-launcher').click();
   await choose('context'); document.getElementById('deepread-lens-action').click();
   document.getElementById('claim').scrollIntoView({block:'center',behavior:'instant'});
 },{once:true});
@@ -277,5 +374,5 @@ if(new URLSearchParams(location.search).has('atlasdemo')) window.addEventListene
 },{once:true});
 if(new URLSearchParams(location.search).has('focusdemo')) window.addEventListener('load',()=>{
   document.getElementById('deepread-launcher').click();
-  document.getElementById('deepread-focus-action').click();
+  followAtlas();
 },{once:true});
