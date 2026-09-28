@@ -1442,7 +1442,7 @@ function readingFlowRole(kind) {
 function updateReadingFlowAction(message = "") {
   const action = document.getElementById("deepread-flow-action");
   if (!action) return;
-  action.textContent = readingFlowStarting ? "Cancel showing structure…" : readingFlow ? "Hide structure on page" : "Show structure on page";
+  action.textContent = readingFlowStarting ? "Cancel showing map…" : readingFlow ? "Hide map on page" : "Show map on page";
   action.setAttribute("aria-pressed", String(Boolean(readingFlow || readingFlowStarting)));
   action.setAttribute("aria-busy", String(readingFlowStarting));
   const status = document.getElementById("deepread-flow-status");
@@ -1637,7 +1637,7 @@ function setDeepReadActive(active) {
 
 function updateGuidedAction() {
   const action = document.getElementById("deepread-focus-action");
-  if (action) action.textContent = focusStarting ? "Choosing passages…" : focusPath ? "Resume Guided Read →" : "Start Guided Read →";
+  if (action) action.textContent = focusStarting ? "Choosing passages…" : focusPath ? "Resume this map →" : "Follow this map →";
 }
 
 function stopFocusPath(message = "") {
@@ -1788,7 +1788,7 @@ function createDeepReadShell() {
   const focusAction = document.createElement("button");
   focusAction.id = "deepread-focus-action";
   focusAction.type = "button";
-  focusAction.textContent = "Start Guided Read →";
+  focusAction.textContent = "Follow this map →";
   focusAction.title = "Follow Atlas through original passages";
   focusAction.setAttribute("aria-label", "Start or resume Guided Read. Follow Atlas through original passages");
   focusAction.setAttribute("aria-pressed", "false");
@@ -1924,7 +1924,7 @@ function createDeepReadShell() {
   const flowAction = document.createElement("button");
   flowAction.id = "deepread-flow-action";
   flowAction.type = "button";
-  flowAction.textContent = "Show structure on page";
+  flowAction.textContent = "Show map on page";
   flowAction.setAttribute("aria-pressed", "false");
   flowAction.setAttribute("aria-controls", "deepread-flow-layer");
   flowAction.addEventListener("click", () => void toggleReadingFlow());

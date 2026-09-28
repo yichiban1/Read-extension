@@ -142,7 +142,7 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     if(new URLSearchParams(location.search).has('hierarchyqa')) {
       const params=new URLSearchParams(location.search), guide=document.getElementById('deepread-guide');
       check(!document.getElementById('deepread-reading-hint'),'Reactivation never repeats the hint in this page session');
-      check(document.querySelectorAll('.deepread-spine > button').length===2 && guide.contains(document.getElementById('deepread-flow-action')) && document.getElementById('deepread-flow-action').textContent==='Show structure on page','Atlas owns task-oriented structure/guide actions without more primary controls');
+      check(document.querySelectorAll('.deepread-spine > button').length===2 && guide.contains(document.getElementById('deepread-flow-action')) && document.getElementById('deepread-flow-action').textContent==='Show map on page','Atlas owns task-oriented structure/guide actions without more primary controls');
       lens.click();
       check(document.querySelector('.deepread-smart-action-label').textContent==='Context' && document.getElementById('deepread-critical-action').textContent.includes('Questions worth examining') && !guide.textContent.includes('USE THIS MAP') && !document.querySelector('.deepread-lens-intro') && document.querySelector('.deepread-lens-tabs').getAttribute('aria-orientation')==='vertical','Lens uses clear Context/Critical choices without Atlas taxonomy or unrelated Explain instructions');
       document.getElementById('deepread-rail-toggle').click(); document.getElementById('deepread-flow-action').click(); await tick();
