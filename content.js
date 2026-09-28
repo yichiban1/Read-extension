@@ -81,7 +81,7 @@ function updateLensUI() {
   const count = context ? smartReadingItems.length : criticalItems.length;
   shell.dataset.lensMode = activeLensMode || "none";
   action.querySelector(".deepread-lens-symbol").textContent = activeLensMode ? (context ? "✦" : "◇") : "◐";
-  action.querySelector(".deepread-lens-label").textContent = activeLensMode ? `Lens · ${context ? "Understand" : "Examine"}` : "Lens";
+  action.querySelector(".deepread-lens-label").textContent = activeLensMode ? `Lens · ${context ? "Context" : "Critical"}` : "Lens";
   const badge = action.querySelector(".deepread-lens-count");
   badge.hidden = !loaded;
   badge.textContent = loaded ? String(count) : "";
@@ -89,15 +89,13 @@ function updateLensUI() {
   action.setAttribute("aria-label", activeLensMode
     ? `Lens. ${context ? "Understand with Context" : "Examine with Critical"}${loading ? ", reading" : loaded ? `, ${count} ${context ? "reading aids" : "questions"}` : ""}. Open Lens choices`
     : "Open Lens choices. Context for understanding, Critical for examination");
-  action.title = activeLensMode ? `Lens · ${context ? "Understand" : "Examine"}` : "Lens · Understand or examine";
+  action.title = activeLensMode ? `Lens · ${context ? "Context" : "Critical"}` : "Lens";
   [SMART_ACTION_ID, CRITICAL_ACTION_ID].forEach((id, index) => {
     const button = document.getElementById(id);
     const selected = activeLensMode === (index === 0 ? "context" : "critical");
     button?.setAttribute("aria-selected", String(selected));
     if (button) button.tabIndex = selected || (!activeLensMode && index === 0) ? 0 : -1;
   });
-  const intro = document.querySelector(".deepread-lens-intro");
-  if (intro) intro.hidden = Boolean(activeLensMode);
   const contextControls = document.querySelector(".deepread-context-controls");
   if (contextControls) contextControls.hidden = !context;
 }
@@ -858,8 +856,8 @@ function updateSmartAction() {
   count.hidden = !active;
   count.textContent = active ? String(smartReadingItems.length) : "";
   button.setAttribute("aria-label", smartReadingLoading ? "Understand. Context is reading this article" : "Understand. Context while reading; background and clarification");
-  button.querySelector(".deepread-smart-action-label").textContent = "Understand";
-  button.title = "Understand · Context while reading";
+  button.querySelector(".deepread-smart-action-label").textContent = "Context";
+  button.title = "Context · Understand while reading";
   updateLensUI();
 }
 
@@ -1124,8 +1122,8 @@ function updateCriticalAction() {
   const count = button.querySelector(".deepread-critical-action-count");
   count.hidden = !active;
   count.textContent = active ? String(criticalItems.length) : "";
-  button.title = "Examine · Questions worth considering";
-  button.querySelector(".deepread-critical-action-label").textContent = "Examine";
+  button.title = "Critical · Questions worth examining";
+  button.querySelector(".deepread-critical-action-label").textContent = "Critical";
   button.setAttribute("aria-label", criticalLoading ? "Examine. Critical is considering this article" : "Examine. Critical questions worth considering");
   updateLensUI();
 }
@@ -1420,7 +1418,7 @@ function showActivationHint() {
   const hint = document.createElement("aside");
   hint.id = "deepread-reading-hint";
   hint.setAttribute("aria-label", "DeepRead reading actions");
-  hint.innerHTML = '<strong>DeepRead</strong><button type="button" aria-label="Dismiss reading hint">×</button><div role="status"><span>Atlas <small>Navigate</small></span><span>Lens <small>Understand / Examine</small></span><span class="deepread-hint-select">Select text <small>Explain</small></span></div>';
+  hint.innerHTML = '<strong>DeepRead</strong><button type="button" aria-label="Dismiss reading hint">×</button><div role="status"><span>Atlas <small>Navigate</small></span><span>Lens <small>Context or questions</small></span><span class="deepread-hint-select">Select text <small>Explain</small></span></div>';
   hint.querySelector("button").addEventListener("click", () => {
     const restore = hint.contains(document.activeElement);
     dismissActivationHint();
@@ -1828,7 +1826,7 @@ function createDeepReadShell() {
   smartAction.setAttribute("aria-pressed", "false");
   smartAction.setAttribute("aria-expanded", "false");
   smartAction.setAttribute("aria-controls", SMART_OVERVIEW_ID);
-  smartAction.innerHTML = '<span class="deepread-smart-action-symbol" aria-hidden="true">✦</span><span class="deepread-lens-choice-copy"><span class="deepread-smart-action-label">Understand</span><small>Context while reading</small></span><span class="deepread-smart-action-count" hidden></span>';
+  smartAction.innerHTML = '<span class="deepread-smart-action-symbol" aria-hidden="true">✦</span><span class="deepread-lens-choice-copy"><span class="deepread-smart-action-label">Context</span><small>Understand while reading</small></span><span class="deepread-smart-action-count" hidden></span>';
   const criticalAction = document.createElement("button");
   criticalAction.id = CRITICAL_ACTION_ID;
   criticalAction.className = "deepread-critical-action";
@@ -1838,7 +1836,7 @@ function createDeepReadShell() {
   criticalAction.setAttribute("aria-pressed", "false");
   criticalAction.setAttribute("aria-expanded", "false");
   criticalAction.setAttribute("aria-controls", CRITICAL_OVERVIEW_ID);
-  criticalAction.innerHTML = '<span class="deepread-critical-action-symbol" aria-hidden="true">◇</span><span class="deepread-lens-choice-copy"><span class="deepread-critical-action-label">Examine</span><small>Questions worth considering</small></span><span class="deepread-critical-action-count" hidden></span>';
+  criticalAction.innerHTML = '<span class="deepread-critical-action-symbol" aria-hidden="true">◇</span><span class="deepread-lens-choice-copy"><span class="deepread-critical-action-label">Critical</span><small>Questions worth examining</small></span><span class="deepread-critical-action-count" hidden></span>';
   const lensAction = document.createElement("button");
   lensAction.id = LENS_ACTION_ID;
   lensAction.type = "button";
@@ -1850,7 +1848,7 @@ function createDeepReadShell() {
   lensPanel.id = LENS_PANEL_ID;
   lensPanel.setAttribute("aria-label", "DeepRead Lens");
   lensPanel.hidden = true;
-  lensPanel.innerHTML = '<div class="deepread-lens-heading"><strong>Lens</strong><button type="button" class="deepread-lens-close" aria-label="Close Lens choices">×</button></div><div class="deepread-lens-tabs" role="tablist" aria-label="Reading purpose" aria-orientation="vertical"></div><p class="deepread-lens-intro">Select a passage to ask for an explanation.</p><div class="deepread-context-controls" hidden><p>Green ticks offer context as you read.</p><button type="button" class="deepread-context-browse">Browse context</button><button type="button" class="deepread-context-off">Turn off Lens</button></div>';
+  lensPanel.innerHTML = '<div class="deepread-lens-heading"><strong>Lens</strong><button type="button" class="deepread-lens-close" aria-label="Close Lens choices">×</button></div><div class="deepread-lens-tabs" role="tablist" aria-label="Reading purpose" aria-orientation="vertical"></div><div class="deepread-context-controls" hidden><button type="button" class="deepread-context-browse">Browse context</button><button type="button" class="deepread-context-off">Turn off Lens</button></div>';
   smartAction.setAttribute("role", "tab");
   criticalAction.setAttribute("role", "tab");
   [smartAction, criticalAction].forEach(action => action.removeAttribute("aria-pressed"));
@@ -1883,7 +1881,7 @@ function createDeepReadShell() {
   smartOverview.hidden = true;
   smartOverview.innerHTML = `
     <div class="deepread-smart-overview-heading">
-      <strong>UNDERSTAND · CONTEXT</strong><span class="deepread-smart-overview-count"></span>
+      <strong>CONTEXT</strong><span class="deepread-smart-overview-count"></span>
     </div>
     <ol class="deepread-smart-overview-list"></ol>
     <p class="deepread-smart-overview-empty" hidden>No passage clearly called for an extra reading aid.</p>
@@ -1897,7 +1895,7 @@ function createDeepReadShell() {
   criticalOverview.setAttribute("aria-labelledby", CRITICAL_ACTION_ID);
   criticalOverview.hidden = true;
   criticalOverview.innerHTML = `
-    <div class="deepread-critical-overview-heading"><strong>EXAMINE</strong><span class="deepread-critical-overview-count"></span></div>
+    <div class="deepread-critical-overview-heading"><strong>CRITICAL</strong><span class="deepread-critical-overview-count"></span></div>
     <p class="deepread-critical-purpose">Questions about the supplied passages. Interpretation, not fact checking.</p>
     <ol class="deepread-critical-overview-list"></ol>
     <p class="deepread-critical-overview-empty" hidden>No passage clearly called for a critical reading question.</p>
@@ -1934,10 +1932,7 @@ function createDeepReadShell() {
   flowStatus.id = "deepread-flow-status";
   flowStatus.setAttribute("role", "status");
   flowStatus.hidden = true;
-  const actionsLabel = document.createElement("small");
-  actionsLabel.className = "deepread-atlas-actions-label";
-  actionsLabel.textContent = "USE THIS MAP";
-  guidedFooter.append(actionsLabel, flowAction, flowStatus);
+  guidedFooter.append(flowAction, flowStatus);
   guidedFooter.append(focusAction);
   guide.append(guidedFooter);
 
@@ -2051,13 +2046,12 @@ function getSelectionRect(range) {
   const backwards = selection?.focusNode === range.startContainer && selection?.focusOffset === range.startOffset;
   const anchor = backwards ? boxes[0] : boxes.at(-1);
   const rect = range.getBoundingClientRect();
-  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, boxes, anchor };
+  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, boxes, anchor, backwards };
 }
 
 function positionSelectionAction() {
   if (!selectionAction || !selectionContext || selectionContext.guided) return;
   cancelAnimationFrame(selectionLayoutFrame);
-  selectionAction.style.visibility = "hidden";
   selectionLayoutFrame = requestAnimationFrame(() => {
     selectionLayoutFrame = 0;
     const action = selectionAction, context = selectionContext;
@@ -2066,38 +2060,32 @@ function positionSelectionAction() {
     const rect = getSelectionRect(context.range);
     if (!rect) return dismissSelectionAction();
     context.rect = rect;
-    const rail = document.querySelector(".deepread-spine")?.getBoundingClientRect();
-    const right = Math.min(document.documentElement.clientWidth - 8, (rail?.left ?? innerWidth) - 12);
-    const boxes = rect.boxes.filter(box => box.bottom > 0 && box.top < innerHeight);
-    const clear = (x, y, width, height, edge = 8) => x >= edge && x + width <= right && y >= 8 && y + height <= innerHeight - 8 &&
-      !boxes.some(box => x < box.right + 3 && x + width > box.left - 3 && y < box.bottom + 3 && y + height > box.top - 3) &&
-      ![y + 3, y + height - 3].some(py => [x + 2, x + width - 2].some(px => hostOccupiesPoint(px, py)));
     action.hidden = false;
-    action.classList.remove("is-edge");
-    const width = action.offsetWidth, height = action.offsetHeight;
+    const { width, height } = action.getBoundingClientRect();
+    const edge = 8, viewportRight = document.documentElement.clientWidth - edge;
+    const rail = document.querySelector(".deepread-spine")?.getBoundingClientRect();
+    const right = rail && rail.left - 12 >= width + edge ? Math.min(viewportRight, rail.left - 12) : viewportRight;
+    const maxLeft = Math.max(edge, right - width), maxTop = Math.max(edge, innerHeight - height - edge);
+    const clamp = p => ({ ...p, left:Math.max(edge, Math.min(p.left, maxLeft)), top:Math.max(edge, Math.min(p.top, maxTop)) });
+    const boxes = rect.boxes.filter(box => box.bottom > 0 && box.top < innerHeight);
+    const overlap = p => boxes.reduce((area, box) => area +
+      Math.max(0, Math.min(p.left + width, box.right) - Math.max(p.left, box.left)) *
+      Math.max(0, Math.min(p.top + height, box.bottom) - Math.max(p.top, box.top)), 0);
     const anchor = rect.anchor;
-    const left = Math.max(8, Math.min(anchor.right - width, right - width));
-    const clampY = y => Math.max(8, Math.min(y, innerHeight - height - 8));
+    const left = Math.max(edge, Math.min(rect.backwards ? anchor.left : anchor.right - width, maxLeft));
     const candidates = [
       { left, top:anchor.bottom + 8, side:"below" }, { left, top:anchor.top - height - 8, side:"above" },
       { left, top:rect.bottom + 8, side:"below" }, { left, top:rect.top - height - 8, side:"above" },
-      { left:rect.right + 8, top:clampY(anchor.top), side:"edge" },
-      { left:rect.left - width - 8, top:clampY(anchor.top), side:"edge" }
+      { left:rect.right + 8, top:Math.max(edge, Math.min(anchor.top, maxTop)), side:"edge" },
+      { left:rect.left - width - 8, top:Math.max(edge, Math.min(anchor.top, maxTop)), side:"edge" }
     ];
-    [32, 64, 96, 128].forEach(offset => candidates.push({ left, top:anchor.bottom + 8 + offset, side:"below" }));
-    let position = candidates.find(p => clear(p.left, p.top, width, height));
+    let position = candidates.find(p => p.left >= edge && p.left <= maxLeft && p.top >= edge && p.top <= maxTop && overlap(p) === 0);
     if (!position) {
-      // A tall/full-width selection may leave only a thin source margin.
-      // Keep a recognisable keyboard action there; never paint over the range.
-      action.classList.add("is-edge");
-      const compactWidth = action.offsetWidth, compactHeight = action.offsetHeight;
-      const top = Math.max(8, Math.min(anchor.top, innerHeight - compactHeight - 8));
-      position = [0, 32, 64, 96, 128].flatMap(offset => [rect.left - compactWidth - 4, rect.right + 4].map(left => ({ left, top:top + offset, side:"edge" })))
-        .find(p => clear(p.left, p.top, compactWidth, compactHeight, 0));
+      // Visibility wins when the selection fills the viewport. Reuse only its
+      // Range boxes to choose the least covered clamped candidate; no host scan.
+      position = candidates.map(clamp).reduce((best, p) => overlap(p) < overlap(best) ? p : best);
+      position.side = "clamped";
     }
-    // Completely occupied viewports have no honest non-overlapping placement.
-    action.hidden = !position;
-    if (!position) return;
     action.dataset.placement = position.side;
     action.style.left = `${position.left}px`;
     action.style.top = `${position.top}px`;
@@ -2171,6 +2159,7 @@ function createSelectionAction() {
   action.setAttribute("role", "group");
   action.setAttribute("aria-label", "Understand selected text with DeepRead");
   action.dataset.state = "ready";
+  action.style.visibility = "hidden";
   action.innerHTML = `
     <span class="deepread-selection-mark" aria-hidden="true">D</span>
     <button class="deepread-selection-explain" type="button" aria-label="Explain selected text with DeepRead" title="Explain selected text with DeepRead">Explain</button>
@@ -2568,7 +2557,7 @@ function showExplanationCard(explanation, context) {
   card.setAttribute("aria-label", "DeepRead explanation");
   card.innerHTML = `
     <header class="deepread-explanation-header">
-      <span>UNDERSTAND · EXPLAIN</span>
+      <span>EXPLAIN</span>
       <button class="deepread-explanation-close" type="button" aria-label="Dismiss explanation">×</button>
     </header>
     <section class="deepread-explanation-body">
@@ -2712,7 +2701,8 @@ function handleSelectionChange() {
 }
 
 function handleDocumentPointerDown(event) {
-  selectionPointerDown = event.button === 0 && !event.target.closest?.(`#${SHELL_ID}, #${SELECTION_ACTION_ID}, #${EXPLANATION_CARD_ID}`);
+  const target = getElementFromNode(event.target);
+  selectionPointerDown = Boolean(event.button === 0 && target && !isExcludedSelectionElement(target));
   const shell = document.getElementById(SHELL_ID);
   if (!event.target.closest?.(`#${LENS_PANEL_ID}, #${LENS_ACTION_ID}`)) setLensPanelOpen(false);
   if (!event.target.closest?.(`#${SMART_OVERVIEW_ID}, #${SMART_ACTION_ID}`)) {
@@ -2733,9 +2723,12 @@ function handleDocumentPointerDown(event) {
 
   const currentText = window.getSelection()?.toString().trim() || "";
   if (selectionAction) {
-    dismissedSelectionText = currentText;
+    if (!selectionPointerDown) dismissedSelectionText = currentText;
     dismissSelectionAction();
   }
+  // A fresh reading gesture can reselect the same words. Only explicit close
+  // or Escape should suppress notifications for the unchanged old selection.
+  if (selectionPointerDown) dismissedSelectionText = "";
   removeExplanationCard();
 }
 
@@ -2743,6 +2736,10 @@ function handleSelectionPointerUp() {
   if (!selectionPointerDown) return;
   selectionPointerDown = false;
   handleSelectionChange();
+}
+
+function handleReadingBlur() {
+  selectionPointerDown = false;
 }
 
 function scheduleGuideRefresh(reason = "reading-content") {
@@ -2893,20 +2890,25 @@ function handleReadingRoute() {
 function startReadingListeners() {
   document.addEventListener("selectionchange", handleSelectionChange);
   document.addEventListener("mousedown", handleDocumentPointerDown, true);
-  document.addEventListener("mouseup", handleSelectionPointerUp);
+  document.addEventListener("mouseup", handleSelectionPointerUp, true);
+  // Dragging an existing native text selection ends with dragend, not mouseup.
+  document.addEventListener("dragend", handleSelectionPointerUp, true);
   document.addEventListener("keydown", handleReadingKeyDown);
   window.addEventListener("scroll", handleReadingScroll, { passive: true });
   window.addEventListener("resize", handleReadingResize, { passive: true });
   window.addEventListener("popstate", handleReadingRoute);
+  window.addEventListener("blur", handleReadingBlur);
 }
 function stopReadingListeners() {
   document.removeEventListener("selectionchange", handleSelectionChange);
   document.removeEventListener("mousedown", handleDocumentPointerDown, true);
-  document.removeEventListener("mouseup", handleSelectionPointerUp);
+  document.removeEventListener("mouseup", handleSelectionPointerUp, true);
+  document.removeEventListener("dragend", handleSelectionPointerUp, true);
   document.removeEventListener("keydown", handleReadingKeyDown);
   window.removeEventListener("scroll", handleReadingScroll);
   window.removeEventListener("resize", handleReadingResize);
   window.removeEventListener("popstate", handleReadingRoute);
+  window.removeEventListener("blur", handleReadingBlur);
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

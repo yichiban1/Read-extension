@@ -1,14 +1,14 @@
 # Reading-layer QA
 
-## Product hierarchy pass — 2026-09-27
+## Explain recovery pass — 2026-09-28
 
-Use `/matrix?hierarchy=1` for ten focused scenarios: article, GitHub README, wiki, documentation, columns, sticky header, tall passage, 520 × 360, 320 × 480 and selected Explain error/retry. Individual checks use `hierarchyqa=1&autorun=1`, optionally `selectionerror=1`.
+`/matrix?hierarchy=1` runs fourteen focused families: article, GitHub README, wiki, docs, columns, sticky header, tall passage, 520 × 360, 320 × 480, error/retry, wide, slim, dense and sidebar. `case=narrow` isolates one listed family. Individual checks use `hierarchyqa=1&autorun=1`; add `selectionerror=1` for retry or `dense=1` to a wide fixture.
 
-These checks cover one-time hint expiry/dismissal, two persistent controls and secondary Atlas actions, Understand/Examine wording, Flow/Guided visual priority without cache loss, completed selection, live Range non-overlap/bounds, keyboard focus, loading/success/error, duplicate-request guards, source focus and temporary tabindex cleanup, explicit dismiss/Escape, long selections, viewport edges, resize, scroll, source rebuild, exit and reactivation. Geometry waits retain the existing timer delay and then wait two animation frames, so scheduled layout finishes before assertions in a busy matrix. Run one matrix at a time and keep its tab active.
+The old implementation fails the new full-size assertion (14 × 25px at 520px) and hides on dense long selections. The recovery contract requires a visible full label, at least a 32px button, viewport bounds and a successful hit test. Primary candidates avoid the selected Range; clamped fallback intentionally prioritises visibility. Coverage includes forward/reverse single-line and full-paragraph selection, same-text reselection, native text dragend without mouseup, host bubbling cancellation, selectionchange before/after mouseup, blur recovery, keyboard selection without mouseup, edges, resize, selection after scroll, retry, duplicate-request guards, source focus and lifecycle cleanup. Flow/Guided priority and simplified labels remain covered. Add `pointerdebug=1` to a manual fixture for a DOM event trace.
 
-Results: both mocked worker suites, syntax/diff checks and all 24 existing + 17 Flow + 5 targeted + 10 hierarchy scenarios passed before delivery. The hierarchy set also covers avoiding the following paragraph when a free margin exists.
+Run one matrix at a time and keep its tab active. Timers wait two layout frames before assertions. `/narrow?width=320&manual=1` provides a manual 320 × 480 child viewport; default `/narrow` retains the 520 × 360 automated check. Runtime/Gemini are mocked; the fixtures never read config.local.js. Recovery reports/screenshots are in `E:\Deepread-extension\qa-artifacts\recovery-simplification`. Synthetic host shapes do not prove real Chrome or external-site behaviour.
 
-Runtime/Gemini remain mocked. Manual in-app selection and screenshots exercise the actual browser selection surface, but do not verify unpacked Chrome or real external-site integration. Reports and screenshots for this pass live in `E:\Deepread-extension\qa-artifacts\product-hierarchy`.
+Final recovery verification: both mocked worker suites and all four matrices passed (24 existing, 17 Flow, 5 targeted, 14 selection). Native in-app selection checks covered article, docs, columns and the 320px child viewport, with selected-text dragend, keyboard expansion, mouse Explain submission and return to source. Unpacked Chrome and real Gemini remain unverified.
 
 ## Reading Flow pass — 2026-09-27
 

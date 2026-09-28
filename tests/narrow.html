@@ -2,4 +2,9 @@
 <style>body{background:#e6e8e7;font:14px system-ui;margin:20px}iframe{width:520px;height:360px;border:1px solid #738277;background:white}</style>
 <p>Actual child viewport: 520 × 360 CSS pixels. Extension scripts loaded in fixture; runtime mocked.</p>
 <iframe src="/?view=dark&autorun=1" title="Dark article in short narrow viewport"></iframe>
+<script>
+const params=new URLSearchParams(location.search), frame=document.querySelector('iframe');
+if(params.get('width')==='320') { frame.style.width='320px'; frame.style.height='480px'; document.querySelector('p').textContent='Actual child viewport: 320 × 480 CSS pixels. Runtime/Gemini mocked.'; }
+if(params.has('manual')) frame.src='/?view=dark';
+</script>
 </html>

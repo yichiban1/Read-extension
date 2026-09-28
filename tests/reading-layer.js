@@ -1,6 +1,15 @@
 // Test-only runtime. No Gemini calls. Real source mapping + content UI scripts.
 const view = new URLSearchParams(location.search).get('view') || 'light';
 document.body.classList.add(view);
+// Optional native-gesture diagnostics, exposed only as readable fixture DOM.
+if (new URLSearchParams(location.search).has('pointerdebug')) {
+  const events = [];
+  ['mousedown', 'mouseup', 'dragstart', 'dragend', 'blur'].forEach(type =>
+    (type === 'blur' ? window : document).addEventListener(type, event => {
+      events.push(`${type}:${event.target?.nodeName || 'window'}`);
+      document.body.dataset.pointerEvents = events.slice(-20).join(', ');
+    }, true));
+}
 const article = document.querySelector('article');
 const sampleA = 'The council expects planting trees beside the river to reduce summer temperatures. Its draft says the project will eliminate heat stress across the neighbourhood. The team will measure seasonal conditions before the final design is approved.';
 const sampleB = 'The proposal models shade and evaporation together. The model uses average wind conditions and assumes that young trees survive their first three summers. Maintenance and water availability are documented as conditions for the estimate.';
@@ -16,6 +25,11 @@ if (view === 'hierarchy' || view === 'wiki') {
 if (view === 'github') { article.className='markdown-body'; article.insertAdjacentHTML('beforeend','<h2>API usage</h2><pre>read(document, { mode: "source" })</pre><h3>Options</h3><p>The API accepts documented options and retains the original document as the navigable reading surface.</p>'); }
 if (view === 'columns') { article.style.columns='2'; article.style.columnGap='40px'; }
 if (view === 'tall') { document.getElementById('claim').textContent = Array(12).fill(sampleA).join(' '); article.style.maxWidth='none'; article.parentElement.style.maxWidth='none'; }
+if (new URLSearchParams(location.search).has('dense')) {
+  article.style.lineHeight='1.35';
+  article.parentElement.style.padding='0 8px 100px';
+  article.querySelectorAll('p').forEach(p=>p.style.margin='0');
+}
 if (view === 'longoutline') article.insertAdjacentHTML('beforeend', Array.from({length:50},(_,i)=>`<h2>Research section ${i+1}</h2><p>${sampleB}</p>`).join(''));
 if (view === 'long') article.insertAdjacentHTML('beforeend', Array.from({length:80},(_,i)=>`<p>Original research passage ${i+1}. ${sampleB}</p>`).join(''));
 if (view === 'clutter') {
@@ -114,7 +128,7 @@ document.getElementById('qa-run').addEventListener('click', async () => {
     check(document.getElementById('deepread-shell').dataset.mode==='active'&&Object.keys(qaCounts).length===0,'Toolbar message activates mode without AI or popup');
     if(new URLSearchParams(location.search).has('hierarchyqa')) {
       const hint=document.getElementById('deepread-reading-hint');
-      check(!!hint && hint.textContent.includes('Select text') && hint.textContent.includes('Understand / Examine') && hint.querySelector('[aria-label="Dismiss reading hint"]'),'First activation gives one small dismissible reading-actions hint');
+      check(!!hint && hint.textContent.includes('Select text') && hint.textContent.includes('Context or questions') && hint.querySelector('[aria-label="Dismiss reading hint"]'),'First activation gives one small dismissible reading-actions hint');
       if(view==='light' && !new URLSearchParams(location.search).has('selectionerror')) { await tick(8200); check(!document.getElementById('deepread-reading-hint'),'Hint disappears naturally after its short reading window'); }
       else { hint.querySelector('button').click(); check(!document.getElementById('deepread-reading-hint'),'Hint can be dismissed without AI or blocking reading'); }
     }
@@ -130,7 +144,7 @@ document.getElementById('qa-run').addEventListener('click', async () => {
       check(!document.getElementById('deepread-reading-hint'),'Reactivation never repeats the hint in this page session');
       check(document.querySelectorAll('.deepread-spine > button').length===2 && guide.contains(document.getElementById('deepread-flow-action')) && document.getElementById('deepread-flow-action').textContent==='Show structure on page','Atlas owns task-oriented structure/guide actions without more primary controls');
       lens.click();
-      check(document.getElementById('deepread-smart-action').textContent.includes('Understand') && document.getElementById('deepread-critical-action').textContent.includes('Questions worth considering') && document.querySelector('.deepread-lens-tabs').getAttribute('aria-orientation')==='vertical','Lens exposes distinct Understand and Examine purposes');
+      check(document.querySelector('.deepread-smart-action-label').textContent==='Context' && document.getElementById('deepread-critical-action').textContent.includes('Questions worth examining') && !guide.textContent.includes('USE THIS MAP') && !document.querySelector('.deepread-lens-intro') && document.querySelector('.deepread-lens-tabs').getAttribute('aria-orientation')==='vertical','Lens uses clear Context/Critical choices without Atlas taxonomy or unrelated Explain instructions');
       document.getElementById('deepread-rail-toggle').click(); document.getElementById('deepread-flow-action').click(); await tick();
       const savedFlow=readingFlow, item=savedFlow.items[0], fullWash=getComputedStyle(item.element).backgroundImage;
       followAtlas(); await tick();
@@ -147,19 +161,17 @@ document.getElementById('qa-run').addEventListener('click', async () => {
       };
       const safeAction = () => {
         const action=document.getElementById('deepread-selection-action');
-        if(!action || action.hidden) return false;
+        if(!action || action.hidden || getComputedStyle(action).visibility!=='visible') return false;
         const r=action.getBoundingClientRect(), boxes=[...window.getSelection().getRangeAt(0).getClientRects()];
-        return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && !boxes.some(box=>r.left<box.right&&r.right>box.left&&r.top<box.bottom&&r.bottom>box.top);
+        const button=action.querySelector('.deepread-selection-explain');
+        const b=button.getBoundingClientRect();
+        return r.width>=100 && b.height>=31.5 && getComputedStyle(button).fontSize!=='0px' && action.contains(document.elementFromPoint(b.left+b.width/2,b.top+b.height/2)) && r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && (action.dataset.placement==='clamped' || !boxes.some(box=>r.left<box.right&&r.right>box.left&&r.top<box.bottom&&r.bottom>box.top));
       };
       select(claim,true);
       check(!document.getElementById('deepread-selection-action'),'Dragging selection does not produce moving action UI');
       document.dispatchEvent(new MouseEvent('mouseup',{button:0,bubbles:true})); await tick(100);
       const action=document.getElementById('deepread-selection-action'), button=action.querySelector('.deepread-selection-explain');
-      check(safeAction() && action.querySelector('.deepread-selection-mark').textContent==='D' && button.getAttribute('aria-label').includes('DeepRead') && count('DEEPREAD_EXPLAIN_SELECTION')===0,'Completed selection reveals a recognisable source-adjacent action without covering selected text or sending AI');
-      if(view==='light' && innerWidth>700) {
-        const actionRect=action.getBoundingClientRect(), next=claim.nextElementSibling.getBoundingClientRect();
-        check(!(actionRect.left<next.right && actionRect.right>next.left && actionRect.top<next.bottom && actionRect.bottom>next.top),'Article action also avoids the following paragraph when a free margin exists');
-      }
+      check(safeAction() && action.querySelector('.deepread-selection-mark').textContent==='D' && button.getAttribute('aria-label').includes('DeepRead') && count('DEEPREAD_EXPLAIN_SELECTION')===0,'Completed selection reveals a full clickable Explain action, bounded and not covered by DeepRead UI, without sending AI');
       const selected=window.getSelection().toString(); button.focus({preventScroll:true});
       check(document.activeElement===button && window.getSelection().toString()===selected && getComputedStyle(button).outlineStyle!=='none','Keyboard focus is visible and preserves native text selection');
       button.click();
@@ -172,7 +184,7 @@ document.getElementById('qa-run').addEventListener('click', async () => {
         button.click(); await tick();
       }
       const card=document.getElementById('deepread-explanation-card');
-      check(!!card && card.dataset.state==='success' && card.querySelector('header').textContent.includes('UNDERSTAND') && card.dataset.sourceId===sourceId && qaExplainRequests[0].text===selected && !!qaExplainRequests[0].context,'Success uses the existing source-linked explanation and Understand hierarchy');
+      check(!!card && card.dataset.state==='success' && card.querySelector('header span').textContent==='EXPLAIN' && card.dataset.sourceId===sourceId && qaExplainRequests[0].text===selected && !!qaExplainRequests[0].context,'Success keeps the source payload and existing explanation under a simple EXPLAIN heading');
       const oldTabindex=claim.getAttribute('tabindex'); card.querySelector('.deepread-explanation-close').click();
       check(document.activeElement===claim && readingTrail.some(trace=>trace.kind==='explained'&&trace.sourceId===sourceId),'Closing a selected explanation returns focus to its source and records the existing Trail');
       claim.blur(); check(claim.getAttribute('tabindex')===oldTabindex,'Temporary source focus attribute is restored on blur');
@@ -182,21 +194,58 @@ document.getElementById('qa-run').addEventListener('click', async () => {
       check(!document.getElementById('deepread-selection-action'),'A dismissed unchanged selection stays dismissed');
       select(); await tick(100); document.querySelector('.deepread-selection-explain').focus(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
       check(!document.getElementById('deepread-selection-action') && document.activeElement===claim,'Escape dismisses the keyboard action and returns to the source');
+      const selectSlice = (backwards, reset=true, full=false) => {
+        if(reset) { window.getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange')); }
+        claim.dispatchEvent(new MouseEvent('mousedown',{button:0,bubbles:true}));
+        const node=claim.firstChild, end=full?node.length:Math.min(12,node.length);
+        window.getSelection().setBaseAndExtent(node,backwards?end:0,node,backwards?0:end);
+        document.dispatchEvent(new Event('selectionchange'));
+        claim.dispatchEvent(new MouseEvent('mouseup',{button:0,bubbles:true}));
+      };
+      selectSlice(false); await tick(100);
+      check(safeAction() && window.getSelection().getRangeAt(0).getClientRects().length===1,'Left-to-right single-line mouse selection reveals full Explain');
+      selectSlice(true); await tick(100);
+      check(safeAction(),'Right-to-left mouse selection reveals full Explain at its focus endpoint');
+      selectSlice(false,false); await tick(100);
+      check(safeAction(),'A fresh mouse gesture can reselect the exact same text without first clearing the Range');
+      claim.dispatchEvent(new MouseEvent('mousedown',{button:0,bubbles:true}));
+      claim.dispatchEvent(new Event('dragstart',{bubbles:true}));
+      claim.dispatchEvent(new Event('dragend',{bubbles:true})); await tick(100);
+      check(safeAction(),'Native selected-text dragend restores Explain without requiring mouseup');
+      selectSlice(true,true,true); await tick(100);
+      check(safeAction(),'Reverse full-paragraph selection keeps Explain visible across multiple lines');
+      claim.addEventListener('mouseup',event=>event.stopPropagation(),{once:true});
+      selectSlice(false); await tick(100);
+      check(safeAction(),'Host mouseup bubbling cancellation cannot strand the pointer-down state');
+      window.getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange'));
+      claim.dispatchEvent(new MouseEvent('mousedown',{button:0,bubbles:true}));
+      claim.dispatchEvent(new MouseEvent('mouseup',{button:0,bubbles:true}));
+      const late=document.createRange(); late.selectNodeContents(claim); window.getSelection().addRange(late);
+      document.dispatchEvent(new Event('selectionchange')); await tick(100);
+      check(safeAction(),'Selectionchange arriving after mouseup still reveals Explain');
+      select(claim,true); window.dispatchEvent(new Event('blur'));
+      document.dispatchEvent(new Event('selectionchange')); await tick(100);
+      check(safeAction(),'Lost mouse release followed by blur cannot suppress later selectionchange');
+      select(); await tick(100);
+      check(safeAction(),'Keyboard selectionchange needs no mouseup and no AI request');
       // Long selections and both vertical viewport edges use actual Range geometry.
       const range=select(); await tick(100);
       const bottom=range.getBoundingClientRect().bottom;
       window.scrollBy(0,bottom-(innerHeight-18)); await tick(); select(); await tick(100);
       check(safeAction(),'Selection near the viewport bottom repositions above or into a safe margin');
       window.scrollBy(0,range.getBoundingClientRect().top-12); await tick(); select(); await tick(100);
-      check(safeAction(),'Selection near the viewport top remains bounded and avoids selected text');
+      check(safeAction(),'Selection near the viewport top keeps the full action visible and bounded');
       claim.style.maxWidth='280px'; window.dispatchEvent(new Event('resize')); await tick(100);
       check(safeAction() && document.querySelectorAll('#deepread-selection-action').length===1,'Resize remeasures the live Range without duplicate selection components');
       if(originalStyle===null) claim.removeAttribute('style'); else claim.setAttribute('style',originalStyle);
       window.dispatchEvent(new Event('resize')); await tick(100);
       select(mapping().root); await tick(100);
-      check(safeAction(),'Long multi-paragraph selection can use a compact page-edge action');
+      check(safeAction(),'Long multi-paragraph selection keeps Explain visible even without an empty host region');
+      const longAction=document.getElementById('deepread-selection-action');
+      check(longAction.getBoundingClientRect().width>=100 && getComputedStyle(longAction.querySelector('.deepread-selection-explain')).fontSize!=='0px','Long selection keeps a visible full-size Explain action, never a tiny D');
       window.dispatchEvent(new Event('scroll')); await tick(100);
       check(!document.getElementById('deepread-selection-action'),'Scrolling dismisses transient selection UI and scheduled work');
+      selectSlice(true); await tick(100); check(safeAction(),'Selecting after scrolling reliably restores full Explain');
       select(); await tick(100); claim.append(' A substantive change invalidates selected action geometry.'); await tick(1100);
       check(!document.getElementById('deepread-selection-action') && !readingFlow,'Source rebuild cancels the selection component and stale structural map');
       check(claim.getAttribute('tabindex')===oldTabindex,'Source rebuild restores temporary source focus attributes');
